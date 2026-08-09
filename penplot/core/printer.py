@@ -474,10 +474,18 @@ class _Worker(QObject):
         self.is_paused = False
         self.pending.clear()
         self.resend_from = None
-        if self._escaped:
+        if self._escaped or not was_running:
+            # nothing was drawing, so there is no pen on paper to rescue
             lift = False
         if lift and self.serial is not None:
             self._escaped = True
+            # An abort almost always follows a numbering desync, and recovery
+            # lines sent on the old counter are rejected out of hand - the pen
+            # would sit on the paper bleeding a hole while we congratulated
+            # ourselves on having lifted it.  Resynchronise first.
+            self._reset_line_numbers()
+            # Relative on purpose: after a desync the tracked height may be a
+            # fiction, and an absolute guess could drive the pen down instead.
             for command in ("G91", "G1 Z10 F900", "G90"):
                 self.send_manual(command)
         if was_running:

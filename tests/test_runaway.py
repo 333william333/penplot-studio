@@ -127,4 +127,56 @@ if not settings.pen.zero_z_at_start:
 else:
     print("  --   touch-off mode is selected; G92 is expected")
 
+
+print("\nthe escape lift has to survive a numbering desync")
+
+
+class PickyPort(FakePort):
+    """Marlin after a desync: rejects numbered lines until M110 resets it."""
+
+    def __init__(self):
+        super().__init__()
+        self.synced = True
+        self.accepted_lifts = 0
+
+    def write(self, data: bytes) -> int:
+        for line in data.decode().splitlines():
+            if not line.strip():
+                continue
+            self.sent.append(line)
+            if line.startswith("M110"):
+                self.synced = True
+                self.rx += b"ok\n"
+                continue
+            if not self.synced:
+                self.rx += b"Error:Line Number is not Last Line Number+1, Last Line: 4\n"
+                continue
+            body = re.sub(r"^N\d+ ", "", line).split("*")[0].split(";")[0].strip().upper()
+            if body.startswith("G91"):
+                self.relative = True
+            elif body.startswith("G90"):
+                self.relative = False
+            elif body.startswith(("G0", "G1")):
+                match = re.search(r"Z(-?\d+(?:\.\d+)?)", body)
+                if match:
+                    value = float(match.group(1))
+                    self.z = self.z + value if self.relative else value
+                    if self.relative and value >= 10:
+                        self.accepted_lifts += 1
+            self.rx += b"ok\n"
+        return len(data)
+
+
+picky = PickyPort()
+worker = _worker(picky)
+worker.running = True                    # pretend a drawing is under way
+picky.synced = False                     # ...and the counter has drifted
+worker._abort_job("lost sync")
+for _ in range(400):
+    worker._tick()
+assert picky.accepted_lifts == 1, (
+    f"the pen was left on the paper: {picky.accepted_lifts} lifts accepted"
+)
+print(f"  ok   the pen came up ({picky.z:+.1f} mm) even though the counter had drifted")
+
 print("\nall checks passed")
