@@ -55,16 +55,19 @@ I fliken **Printer**:
 2. Tryck **Set the pen height…** och följ de fyra stegen i guiden:
    hema X och Y → åk till mitten av bädden → sänk Z (5 / 1 / 0,25 / 0,05 mm)
    tills spetsen precis nuddar → **Draw a test line** för att se om trycket är
-   rätt → **The pen is touching · use this as Z0**.
+   rätt → **The pen is touching · use this height**.
 
-Nu står `Drawing Z = 0` och programmet lyfter pennan `Lift` millimeter (2,5 mm
-som standard) vid varje förflyttning.
+Nu står `Drawing Z` på den uppmätta maskinkoordinaten, och programmet lyfter
+pennan `Lift` millimeter (2,5 mm som standard) vid varje förflyttning.
 
 > **Referensen dör med strömmen.** Stäng inte av skrivaren och släpp inte
 > motorerna (M84) mellan kalibreringen och **Send**. Gör du det måste höjden
 > sättas om. Programmet håller reda på det själv och vägrar starta ett jobb med
 > okalibrerad penna – annars hemar skrivaren, lyfter, och ritar hela bilden i
 > luften utan att någonsin nudda papperet.
+>
+> Däremot får du skicka **samma jobb hur många gånger du vill** utan att kalibrera
+> om: höjden är en maskinkoordinat, inget nollställs vid start.
 
 ## 3. Arbetsflödet
 
