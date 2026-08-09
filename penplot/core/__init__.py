@@ -1,0 +1,1 @@
+"""Core, UI-independent logic."""
