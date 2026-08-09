@@ -1320,6 +1320,11 @@ class MainWindow(QMainWindow):
                 if not ask_to_calibrate(self, self.settings, self.printer):
                     return
             elif box.clickedButton() is anyway:
+                # Taking them at their word: the tip is on the paper now, so
+                # touch-off is the honest mode.  Going ahead in measured mode
+                # would send the pen to a machine height from an older session.
+                self.settings.pen.zero_z_at_start = True
+                self.settings.pen.draw_z = 0.0
                 self.printer.pen_zeroed = True
             else:
                 return
