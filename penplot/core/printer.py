@@ -31,6 +31,15 @@ __all__ = ["PrinterLink", "available_ports", "PortInfo"]
 # how long to wait for an "ok" before assuming something went wrong
 STALL_SECONDS = 15.0
 
+#: Past this many resend requests something is wrong with the cable or the baud
+#: rate, and replaying strokes on top of each other helps nobody.
+MAX_RESENDS = 40
+
+#: A manual command is a live gesture.  If it has not reached the wire within
+#: this long something went wrong, and replaying it later moves the machine on
+#: behalf of an operator who has moved on.
+MANUAL_TTL = 20.0
+
 
 @dataclass
 class PortInfo:
@@ -86,6 +95,7 @@ class _Worker(QObject):
     job_finished = Signal(bool, str)
     position = Signal(float, float, float)
     measured = Signal(float, float, float)   # a real M114 reply, not a guess
+    reference_lost = Signal()                # motors released: Z means nothing now
     state = Signal(str)
 
     def __init__(self) -> None:
@@ -98,6 +108,9 @@ class _Worker(QObject):
         self.pending: list[int] = []
         self.resend_from: int | None = None
         self.window = 3
+        self.resends = 0
+        #: one escape lift per job, no matter how the job dies
+        self._escaped = False
         self.use_checksums = True
         self.last_ok = 0.0
         self.last_rx = 0.0
@@ -120,7 +133,8 @@ class _Worker(QObject):
         self.running = False
         self.is_paused = False
         self.skip_m0 = True
-        self.manual: list[str] = []
+        #: (queued_at, command) - see MANUAL_TTL
+        self.manual: list[tuple[float, str]] = []
         self.last_position = [0.0, 0.0, 0.0]
         self.relative = False
         self.waiting_for_start = False
@@ -150,6 +164,11 @@ class _Worker(QObject):
         self.history.clear()
         self.pending.clear()
         self.line_number = 0
+        self.manual.clear()          # nothing from before this port belongs here
+        self.resend_from = None
+        self.relative = False
+        self.resends = 0
+        self._escaped = False
         self.waiting_for_start = True
         self.opened_at = time.monotonic()
         self.last_ok = self.opened_at
@@ -175,6 +194,8 @@ class _Worker(QObject):
     def close_port(self) -> None:
         self.running = False
         self.is_paused = False
+        self.manual.clear()
+        self.resend_from = None
         if self.serial is not None:
             try:
                 self.serial.close()
@@ -205,6 +226,8 @@ class _Worker(QObject):
         self.total_lines = len(self.program_lines)
         self.cursor = 0
         self.skip_m0 = skip_m0
+        self.resends = 0
+        self._escaped = False
         self.running = True
         self.is_paused = False
         self.last_ok = time.monotonic()
@@ -235,7 +258,8 @@ class _Worker(QObject):
         self.program_lines = []
         self.cursor = 0
         if lift and self.serial is not None:
-            self.manual.extend(["G91", "G1 Z10 F900", "G90", "M117 Cancelled"])
+            for command in ("G91", "G1 Z10 F900", "G90", "M117 Cancelled"):
+                self.send_manual(command)
         if was_running:
             self.job_finished.emit(False, "Cancelled")
         self.state.emit("connected" if self.serial else "idle")
@@ -250,9 +274,21 @@ class _Worker(QObject):
 
     @Slot(str)
     def send_manual(self, command: str) -> None:
+        """Queue one line for the next free slot in the send window.
+
+        Nothing is queued while the port is shut.  It used to be, and the list
+        survived open_port, so twenty taps on the Z jog button with no printer
+        attached fired 210 mm of relative Z travel the instant a port opened -
+        the machine ran for the top of the gantry before the operator had asked
+        for anything at all.
+        """
         command = command.strip()
-        if command:
-            self.manual.append(command)
+        if not command:
+            return
+        if self.serial is None:
+            self.log.emit(f"Not connected - {command} was not sent", "error")
+            return
+        self.manual.append((time.monotonic(), command))
 
     @Slot()
     def emergency_stop(self) -> None:
@@ -335,6 +371,11 @@ class _Worker(QObject):
 
     def _track_position(self, command: str) -> None:
         upper = command.upper()
+        if upper.startswith(("M84", "M18", "M112")):
+            # Streamed, not typed: the generated footer ends with M84, so the
+            # pen height reference dies at the end of every job and the app has
+            # to stop believing it is still calibrated.
+            self.reference_lost.emit()
         if upper.startswith("G91"):
             self.relative = True
         elif upper.startswith("G90"):
@@ -397,6 +438,15 @@ class _Worker(QObject):
             )
             self._abort_job("Lost sync with the printer")
             return
+        self.resends += 1
+        if self.resends > MAX_RESENDS:
+            self.log.emit(
+                f"The printer has asked for {self.resends} resends. Stopping instead of "
+                "replaying the drawing over and over.",
+                "error",
+            )
+            self._abort_job("Too many resend requests")
+            return
         self.pending.clear()
         self.resend_from = number
         self.log.emit(f"Resending from line {number}", "info")
@@ -411,14 +461,25 @@ class _Worker(QObject):
         self._resend_from(last_accepted + 1)
 
     def _abort_job(self, reason: str, lift: bool = True) -> None:
-        """Stop the drawing and get the pen off the paper."""
+        """Stop the drawing and get the pen off the paper.
+
+        Exactly one escape lift per job.  It used to re-arm: the lift itself
+        refills `pending`, a printer that has stopped answering then trips the
+        stall timer again, and every cycle queued another relative `G1 Z10` -
+        the machine walked up its own Z axis 10 mm at a time until it hit the
+        top, with nobody having asked for anything.
+        """
         was_running = self.running
         self.running = False
         self.is_paused = False
         self.pending.clear()
         self.resend_from = None
+        if self._escaped:
+            lift = False
         if lift and self.serial is not None:
-            self.manual.extend(["G91", "G1 Z10 F900", "G90"])
+            self._escaped = True
+            for command in ("G91", "G1 Z10 F900", "G90"):
+                self.send_manual(command)
         if was_running:
             self.job_finished.emit(False, reason)
         self.state.emit("connected" if self.serial else "idle")
@@ -561,9 +622,12 @@ class _Worker(QObject):
                 return
             self.log.emit(f"No answer for {STALL_SECONDS:.0f} s - nudging the printer", "error")
             numbered = [n for n in self.pending if n > 0]
-            if numbered:
+            if numbered and self.running:
                 self._resend_from(min(numbered))
             else:
+                # Nothing is streaming, so there is no stream to recover.
+                # Replaying here would re-run whatever was last written, and
+                # the last thing written after an abort is a relative lift.
                 self.pending.clear()
 
         # ---- catch up after a resend request before anything new goes out ----
@@ -582,7 +646,11 @@ class _Worker(QObject):
 
         # ---- write ----
         while self.manual and len(self.pending) < self.window:
-            self._write_raw(self.manual.pop(0))
+            queued_at, command = self.manual.pop(0)
+            if now - queued_at > MANUAL_TTL:
+                self.log.emit(f"Dropped a stale command ({command})", "error")
+                continue
+            self._write_raw(command)
 
         if not self.running or self.is_paused:
             return
@@ -621,6 +689,7 @@ class PrinterLink(QObject):
     job_finished = Signal(bool, str)
     position = Signal(float, float, float)
     measured = Signal(float, float, float)
+    reference_lost = Signal()
     state_changed = Signal(str)
 
     _open = Signal(str, int)
@@ -650,6 +719,7 @@ class PrinterLink(QObject):
         self.worker.job_finished.connect(self.job_finished)
         self.worker.position.connect(self.position)
         self.worker.measured.connect(self._on_measured)
+        self.worker.reference_lost.connect(self._on_reference_lost)
         self.worker.state.connect(self.state_changed)
 
         self._open.connect(self.worker.open_port)
@@ -722,6 +792,11 @@ class PrinterLink(QObject):
     def query_position(self) -> None:
         """Ask the machine where it actually is."""
         self.send("M114")
+
+    def _on_reference_lost(self) -> None:
+        self.pen_zeroed = False
+        self.machine_z = None
+        self.reference_lost.emit()
 
     def _on_measured(self, x: float, y: float, z: float) -> None:
         self.machine_z = z

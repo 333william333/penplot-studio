@@ -84,6 +84,19 @@ class ConnectionPanel(QWidget):
         self.state_label = QLabel("Not connected")
         self.state_label.setObjectName("Hint")
         card.add(self.state_label)
+
+        # Nothing in the app could stop a moving machine.  When a plotter runs
+        # away, "unplug the USB" is not an answer - the board keeps executing
+        # what it already buffered.  M112 halts it immediately.
+        self.stop_button = QPushButton("■  EMERGENCY STOP")
+        self.stop_button.setToolTip(
+            "Sends M112. The printer stops dead and has to be reset or power-cycled."
+        )
+        self.stop_button.setStyleSheet(
+            f"QPushButton {{ background: {theme.DANGER}; color: #FFFFFF; font-weight: 600; }}"
+        )
+        self.stop_button.clicked.connect(self._emergency_stop)
+        card.add(self.stop_button)
         outer.addWidget(card)
 
         # ---- manual control ----
@@ -302,12 +315,29 @@ class ConnectionPanel(QWidget):
         self._update_enabled()
 
     def _update_enabled(self) -> None:
-        """Jogging mid-job would fight the stream and ruin the drawing."""
+        """Jogging mid-job would fight the stream and ruin the drawing.
+
+        Jogging with nothing connected used to be allowed and did nothing
+        visible - but the commands were kept, and fired the moment a port
+        opened.  Twenty taps became 210 mm of Z travel on connect.
+        """
         printing = getattr(self, "_printing", False)
+        live = self.printer.is_connected and not printing
         for widget in getattr(self, "_manual_widgets", []):
-            widget.setEnabled(not printing)
+            widget.setEnabled(live)
             if printing:
                 widget.setToolTip("Not while the printer is drawing - pause first")
+            elif not self.printer.is_connected:
+                widget.setToolTip("Connect to the printer first")
+        if hasattr(self, "stop_button"):
+            self.stop_button.setEnabled(self.printer.is_connected)
+        if hasattr(self, "command_input"):
+            self.command_input.setEnabled(self.printer.is_connected)
+
+    def _emergency_stop(self) -> None:
+        self.printer.emergency_stop()
+        self.state_label.setText("M112 sent - the printer needs a reset")
+        self.state_label.setStyleSheet(f"color: {theme.DANGER};")
 
     def _release_motors(self) -> None:
         answer = QMessageBox.question(
