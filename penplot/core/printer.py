@@ -85,6 +85,7 @@ class _Worker(QObject):
     paused = Signal(str)
     job_finished = Signal(bool, str)
     position = Signal(float, float, float)
+    measured = Signal(float, float, float)   # a real M114 reply, not a guess
     state = Signal(str)
 
     def __init__(self) -> None:
@@ -458,6 +459,16 @@ class _Worker(QObject):
             self.log.emit("Printer ready", "info")
             self._reset_line_numbers()
             return
+        if "x:" in lowered and "z:" in lowered:
+            # M114: "X:110.00 Y:110.00 Z:4.35 E:0.00 Count: ..."  The machine is
+            # the only honest source for the pen height reference, so take it
+            # from here rather than from what we think we sent.
+            found = dict(re.findall(r"([XYZ]):\s*(-?\d+(?:\.\d+)?)", stripped.upper()))
+            if len(found) >= 3:
+                self.last_position = [float(found["X"]), float(found["Y"]), float(found["Z"])]
+                self.position.emit(*self.last_position)
+                self.measured.emit(*self.last_position)
+            return
         if "busy" in lowered:
             # proof the machine is alive and working: homing, a long move or an
             # M0 prompt can legitimately take minutes
@@ -609,6 +620,7 @@ class PrinterLink(QObject):
     paused = Signal(str)
     job_finished = Signal(bool, str)
     position = Signal(float, float, float)
+    measured = Signal(float, float, float)
     state_changed = Signal(str)
 
     _open = Signal(str, int)
@@ -637,6 +649,7 @@ class PrinterLink(QObject):
         self.worker.paused.connect(self.paused)
         self.worker.job_finished.connect(self.job_finished)
         self.worker.position.connect(self.position)
+        self.worker.measured.connect(self._on_measured)
         self.worker.state.connect(self.state_changed)
 
         self._open.connect(self.worker.open_port)
@@ -652,6 +665,8 @@ class PrinterLink(QObject):
 
         self._is_connected = False
         self._port = ""
+        #: the machine's own Z from the last M114, or None if it has never said
+        self.machine_z: float | None = None
         #: has the operator zeroed the pen on the paper since connecting?
         #: The G92 reference does not survive a power cycle or an M84, so this
         #: is deliberately not persisted.
@@ -704,6 +719,14 @@ class PrinterLink(QObject):
             self.pen_zeroed = False   # the motors let go; the reference is gone
         self._manual.emit(command)
 
+    def query_position(self) -> None:
+        """Ask the machine where it actually is."""
+        self.send("M114")
+
+    def _on_measured(self, x: float, y: float, z: float) -> None:
+        self.machine_z = z
+        self.measured.emit(x, y, z)
+
     def set_protocol(self, use_checksums: bool) -> None:
         self._protocol.emit(bool(use_checksums))
 
@@ -721,6 +744,7 @@ class PrinterLink(QObject):
         self._is_connected = True
         self._port = port
         self.pen_zeroed = False
+        self.machine_z = None
         self.connected.emit(port)
 
     def _on_disconnected(self, reason: str) -> None:

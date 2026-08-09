@@ -1295,7 +1295,7 @@ class MainWindow(QMainWindow):
         # warnings belong here, not in a status bar the dialog is about to cover
         for warning in getattr(program, "warnings", []):
             message += f"⚠  {warning}\n\n"
-        if self.settings.pen.zero_z_at_start and not getattr(self.printer, "pen_zeroed", False):
+        if not getattr(self.printer, "pen_zeroed", False):
             # Without a reference the file homes, lifts and then draws the whole
             # picture in the air - which reads as "it only goes up in Z".
             from .pen_height_dialog import ask_to_calibrate
@@ -1305,9 +1305,11 @@ class MainWindow(QMainWindow):
             box.setIcon(QMessageBox.Warning)
             box.setText("The pen height has not been set since you connected.")
             box.setInformativeText(
-                "This file takes the height the pen is at right now as Z0. If the pen is "
-                "not touching the paper, the printer will lift and draw the whole picture "
-                "in mid-air without ever marking anything."
+                "The machine has no idea how far the paper is from the tip. Without that "
+                "number it will lift and drop the pen for the whole drawing without ever "
+                "marking anything - which looks like the Z axis running away upwards.\n\n"
+                "The reference does not survive a power cycle or releasing the motors, so "
+                "it has to be set once each time the printer is switched on."
             )
             setup = box.addButton("Set the pen height…", QMessageBox.AcceptRole)
             anyway = box.addButton("It is already touching", QMessageBox.DestructiveRole)
@@ -1323,7 +1325,12 @@ class MainWindow(QMainWindow):
                 return
 
         if self.settings.pen.zero_z_at_start:
-            message += "The pen height is set. Z0 is where the tip is now."
+            message += "Z0 will be taken from where the pen is standing right now."
+        elif self.printer.machine_z is not None:
+            message += (
+                f"The pen draws at machine Z{self.settings.pen.draw_z:.2f}; the head is at "
+                f"Z{self.printer.machine_z:.2f} now. Nothing is re-zeroed."
+            )
         else:
             message += "Z is used as the printer currently has it. Make sure the pen is safely above the bed."
 

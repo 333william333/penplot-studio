@@ -146,6 +146,13 @@ def generate(job: PlotJob, settings: AppSettings, library: PenLibrary) -> GCodeP
                 f"{label} (X{x:.0f} Y{y:.0f}) is outside this bed ({machine.bed_x:.0f} x "
                 f"{machine.bed_y:.0f} mm). The head will hit its limits."
             )
+    if not pen_setup.zero_z_at_start and not (-50.0 <= pen_setup.draw_z <= machine.max_z):
+        # Negative is normal: with Z never homed, the machine's zero is wherever
+        # it powered up, so the paper often sits below it.  Wildly out is not.
+        program.warnings.append(
+            f"The stored pen height (Z{pen_setup.draw_z:.2f}) is nowhere near this machine's "
+            f"Z range. Set the pen height again."
+        )
     if pen_setup.change_z > machine.max_z:
         program.warnings.append(
             f"The pen-change height (Z{pen_setup.change_z:.0f}) is above this machine's "
@@ -209,10 +216,18 @@ def generate(job: PlotJob, settings: AppSettings, library: PenLibrary) -> GCodeP
 
     safe_z = pen_setup.draw_z + max(pen_setup.lift, 0.5) + 3.0
     if pen_setup.zero_z_at_start:
+        # Touch-off mode: whatever height the pen is at right now is declared
+        # to be the paper.  Only correct if the operator really has just set it
+        # there, which is why the app refuses to send in this mode without a
+        # confirmation - see MainWindow.send_to_printer.
         emit.comment("The pen must be touching the paper right now - this becomes Z0")
         emit.add(f"G92 Z{_num(pen_setup.draw_z)}")
         emit.add(f"G1 Z{_num(safe_z)} F{z_feed} ; lift before homing")
     else:
+        # Measured mode: the drawing height is an absolute machine coordinate,
+        # so nothing here may redefine the frame.  A relative hop clears the
+        # paper without needing to know where we are.
+        emit.comment(f"Pen touches the paper at machine Z{_num(pen_setup.draw_z)}")
         emit.add("G91 ; relative")
         emit.add(f"G1 Z{_num(max(pen_setup.lift, 0.5) + 3.0)} F{z_feed} ; lift before homing")
         emit.add("G90 ; absolute")
@@ -223,6 +238,10 @@ def generate(job: PlotJob, settings: AppSettings, library: PenLibrary) -> GCodeP
         emit.add("G28 X Y ; home the carriage, leave Z alone")
     else:
         emit.comment("Homing skipped")
+    # G28 is the one command that can leave the machine in a mode we did not
+    # choose, and every Z number after this point is absolute.  Saying so again
+    # costs one line and removes a whole class of runaway.
+    emit.add("G90 ; absolute - every Z below is a machine coordinate")
     emit.blank()
 
     # ---------------- body ----------------------------------------------

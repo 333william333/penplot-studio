@@ -45,8 +45,9 @@ lyfter pennan**.
 ## 2. Ställ pennhöjden (görs varje gång du byter penna första gången)
 
 Z-hemning med penna monterad är farligt: pennan trycks ner i bädden. Därför
-använder programmet **G92** istället – den höjd pennan står på när jobbet startar
-blir Z0.
+hemas Z aldrig. Istället **mäts** höjden där spetsen nuddar papperet en gång, och
+sparas som en maskinkoordinat. Varje jobb åker sedan rakt till den höjden – du kan
+skicka samma bild hur många gånger som helst.
 
 I fliken **Printer**:
 

@@ -1,18 +1,19 @@
 """The pen height wizard.
 
 Everything the machine draws is measured from one number: the Z at which the
-tip touches the paper.  The generated file says `G92 Z<draw>` on the assumption
-that the pen is already touching when you press Send - get that wrong and the
-plotter homes, lifts, and then draws the whole picture in mid-air, which looks
-exactly like "it only goes up in Z and never starts".
+tip touches the paper.  This finds that number and stores it as an absolute
+machine coordinate.
 
-So this walks through it: home, go to the paper, come down until the pen marks,
-draw a test line, and only then set the reference.
+It used to be stored as a `G92 Z0` instead, and the job repeated that `G92 Z0`
+at its own start - which re-zeroed at whatever height the pen had drifted to
+(the lift this dialog applies, or the Z60 the previous job parked at).  The
+paper then sat that far below Z0 and the machine lifted and dropped for hours
+without ever touching it: "it only goes up in Z and never starts".
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -42,6 +43,13 @@ class PenHeightDialog(QDialog):
         self.settings = settings
         self.printer = printer
         self._travelled = 0.0
+        #: where the machine said Z was when the wizard opened.  Everything is
+        #: measured from this, so the reference is a real machine coordinate
+        #: and not "wherever the pen happened to be when you pressed Send".
+        self._z_at_open: float | None = None
+        printer.measured.connect(self._on_measured)
+        if printer.is_connected:
+            printer.query_position()
 
         self.setWindowTitle("Set the pen height")
         self.setModal(True)
@@ -50,8 +58,9 @@ class PenHeightDialog(QDialog):
         outer.setSpacing(theme.px(10))
 
         intro = QLabel(
-            "The height where the tip touches the paper becomes Z0 for the whole drawing.\n"
-            "Keep the printer powered on afterwards - the reference is lost on a power cycle."
+            "Find the height where the tip touches the paper. It is stored as a machine "
+            "coordinate, so every job afterwards goes straight to it.\n"
+            "Keep the printer powered on - a power cycle or M84 loses the reference."
         )
         intro.setObjectName("Hint")
         intro.setWordWrap(True)
@@ -114,10 +123,11 @@ class PenHeightDialog(QDialog):
         # ---- 4. commit ---------------------------------------------------
         step4 = Card("4 · SET IT")
         step4.add(hint_label(
-            "Stores this height as the drawing Z. Do not turn the printer off or release "
-            "the motors between here and pressing Send."
+            "Stores this height as the drawing Z, as an absolute machine coordinate. "
+            "Every job then travels straight to it - you can send the same drawing again "
+            "and again. Only a power cycle or releasing the motors loses it."
         ))
-        commit = QPushButton("The pen is touching · use this as Z0")
+        commit = QPushButton("The pen is touching · use this height")
         commit.setObjectName("Primary")
         commit.clicked.connect(self._commit)
         step4.add(commit)
@@ -150,20 +160,41 @@ class PenHeightDialog(QDialog):
             f"G1 X{machine.bed_x / 2:.1f} Y{machine.bed_y / 2:.1f} F{machine.travel_feed:.0f}"
         )
 
+    def _on_measured(self, _x: float, _y: float, z: float) -> None:
+        if self._z_at_open is None:
+            self._z_at_open = z
+        self._update_travel()
+
     def _jog(self, delta: float) -> None:
         self.printer.send("G91")
         self.printer.send(f"G1 Z{delta:.3f} F{self._z_feed()}")
         self.printer.send("G90")
+        self.printer.query_position()
         self._travelled += delta
         self._update_travel()
 
+    def _machine_z(self) -> float:
+        """Best available machine Z: what the printer last reported, or dead
+        reckoning from where it was when the wizard opened."""
+        reported = self.printer.machine_z
+        if reported is not None:
+            return float(reported)
+        if self._z_at_open is not None:
+            return self._z_at_open + self._travelled
+        return 0.0
+
     def _update_travel(self) -> None:
+        if not hasattr(self, "travel_label"):
+            return          # a reply that beat the widgets into existence
         if abs(self._travelled) < 1e-9:
-            self.travel_label.setText("Not moved yet")
+            moved = "Not moved yet"
         elif self._travelled < 0:
-            self.travel_label.setText(f"Lowered {-self._travelled:.2f} mm")
+            moved = f"Lowered {-self._travelled:.2f} mm"
         else:
-            self.travel_label.setText(f"Raised {self._travelled:.2f} mm")
+            moved = f"Raised {self._travelled:.2f} mm"
+        if self.printer.machine_z is not None:
+            moved += f"   ·   machine Z {self.printer.machine_z:.2f}"
+        self.travel_label.setText(moved)
 
     def _test_line(self) -> None:
         """20 mm out and back at the current height, so the mark is visible."""
@@ -174,12 +205,37 @@ class PenHeightDialog(QDialog):
         self.printer.send("G90")
 
     def _commit(self) -> None:
-        self.settings.pen.draw_z = 0.0
-        self.settings.pen.zero_z_at_start = True
-        self.printer.send("G92 Z0")
-        self.printer.send(f"G1 Z{max(self.settings.pen.lift, 2.0):.2f} F{self._z_feed()}")
+        """Store the height as an absolute machine coordinate.
+
+        The old behaviour was `G92 Z0` here and `G92 Z0` again at the top of
+        every job.  The second one re-zeroed wherever the pen had ended up -
+        the lift this dialog applies, or the Z60 the previous job parked at -
+        so the paper silently moved that far below Z0 and the pen drew in the
+        air, lifting and dropping for hours without marking anything.  Storing
+        a machine coordinate means the job can be sent as many times as you
+        like: it always travels to the same absolute height.
+        """
+        self.printer.query_position()
+        self._wait_for_reply()
+        z = self._machine_z()
+        self.settings.pen.draw_z = round(z, 3)
+        self.settings.pen.zero_z_at_start = False   # no G92 - absolute from now on
         self.printer.pen_zeroed = True
+        self.printer.send(f"G1 Z{z + max(self.settings.pen.lift, 2.0):.2f} F{self._z_feed()}")
         self.accept()
+
+    def _wait_for_reply(self, timeout_ms: int = 1500) -> None:
+        """Give M114 a moment to come back before falling back to dead reckoning."""
+        if not self.printer.is_connected:
+            return
+        loop = QEventLoop()
+        self.printer.measured.connect(loop.quit)
+        QTimer.singleShot(timeout_ms, loop.quit)
+        loop.exec()
+        try:
+            self.printer.measured.disconnect(loop.quit)
+        except (RuntimeError, TypeError):
+            pass
 
 
 def ask_to_calibrate(parent, settings: AppSettings, printer: PrinterLink) -> bool:

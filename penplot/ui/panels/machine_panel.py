@@ -30,9 +30,11 @@ class MachinePanel(QWidget):
         pen_card.add(self.binder.slider(pen, "draw_z", -5.0, 60.0, label="Drawing Z", decimals=2, step=0.05, suffix="mm"))
         pen_card.add(self.binder.slider(pen, "lift", 0.2, 20.0, label="Lift", decimals=2, step=0.1, suffix="mm",
                                         hint="How far the pen rises for travel moves."))
-        pen_card.add(self.binder.check(pen, "zero_z_at_start", "Current pen height is Z0 (G92)",
-                                       hint="Safest with a pen fitted: put the tip on the paper, then start. "
-                                            "The file never homes Z."))
+        pen_card.add(self.binder.check(pen, "zero_z_at_start", "Re-zero from where the pen is (G92)",
+                                       hint="Off is better: the drawing Z above is then a machine coordinate "
+                                            "the job travels to, so the same file can be sent again and "
+                                            "again. On, the job calls the pen's current height Z0 - which "
+                                            "silently draws in mid-air if it is not touching the paper."))
         pen_card.add_heading("Pen change position")
         pen_card.add(self.binder.slider(pen, "change_z", 5.0, 200.0, label="Z", decimals=0, step=5, suffix="mm"))
         pen_card.add(self.binder.slider(pen, "change_x", 0.0, 300.0, label="X", decimals=0, step=5, suffix="mm"))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -403,16 +403,35 @@ class ConnectionPanel(QWidget):
             self._mark_zeroed()
 
     def _set_zero(self) -> None:
-        self.settings.pen.draw_z = 0.0
-        self.settings.pen.zero_z_at_start = True
-        self.printer.send("G92 Z0")
+        """Take the height the pen is standing at, as a machine coordinate.
+
+        This used to send `G92 Z0`, and so did the top of every generated file -
+        the second one re-zeroed at whatever height the pen had drifted to, and
+        the drawing quietly happened that far above the paper.
+        """
+        self.printer.query_position()
+        QTimer.singleShot(600, self._store_measured)
+        self.zero_label.setText("Asking the printer where it is…")
+        self.zero_label.setStyleSheet(f"color: {theme.TEXT_MUTED};")
+
+    def _store_measured(self) -> None:
+        z = self.printer.machine_z
+        if z is None:
+            self.zero_label.setText(
+                "The printer did not answer M114. Use the wizard, or switch on "
+                "'Re-zero from where the pen is' in the Printer panel."
+            )
+            self.zero_label.setStyleSheet(f"color: {theme.WARNING};")
+            return
+        self.settings.pen.draw_z = round(float(z), 3)
+        self.settings.pen.zero_z_at_start = False
         self.printer.pen_zeroed = True
         self._mark_zeroed()
 
     def _mark_zeroed(self) -> None:
         self.zero_label.setText(
-            "✓ Pen height set. Drawing Z is 0 here. Keep the printer powered on and do "
-            "not release the motors."
+            f"✓ Pen height set: the paper is at machine Z{self.settings.pen.draw_z:.2f}. "
+            "Keep the printer powered on and do not release the motors."
         )
         self.zero_label.setStyleSheet(f"color: {theme.SUCCESS};")
         self.settings_changed.emit()
