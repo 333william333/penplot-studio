@@ -48,17 +48,22 @@ Z-hemning med penna monterad är farligt: pennan trycks ner i bädden. Därför
 använder programmet **G92** istället – den höjd pennan står på när jobbet startar
 blir Z0.
 
-I fliken **Monitor**:
+I fliken **Printer**:
 
 1. Välj USB-porten och tryck **Connect**.
-2. Tryck **⌂ XY** (hemar bara X och Y – pennan lyfts först).
-3. Lägg papperet på plats.
-4. Jogga ner Z med steget **0.05** tills pennan precis nuddar papperet.
-5. Tryck **Use this height as drawing Z**.
+2. Tryck **Set the pen height…** och följ de fyra stegen i guiden:
+   hema X och Y → åk till mitten av bädden → sänk Z (5 / 1 / 0,25 / 0,05 mm)
+   tills spetsen precis nuddar → **Draw a test line** för att se om trycket är
+   rätt → **The pen is touching · use this as Z0**.
 
 Nu står `Drawing Z = 0` och programmet lyfter pennan `Lift` millimeter (2,5 mm
-som standard) vid varje förflyttning. Stäng inte av skrivaren – då tappas
-referensen.
+som standard) vid varje förflyttning.
+
+> **Referensen dör med strömmen.** Stäng inte av skrivaren och släpp inte
+> motorerna (M84) mellan kalibreringen och **Send**. Gör du det måste höjden
+> sättas om. Programmet håller reda på det själv och vägrar starta ett jobb med
+> okalibrerad penna – annars hemar skrivaren, lyfter, och ritar hela bilden i
+> luften utan att någonsin nudda papperet.
 
 ## 3. Arbetsflödet
 

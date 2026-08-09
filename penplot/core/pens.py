@@ -105,6 +105,23 @@ class Pen:
     blade_offset: float = 0.0       # mm the tip of a swivel blade trails behind
     overcut: float = 0.0            # mm past the start of a closed cut
 
+    #: The finest real drawing pen is about 0.03 mm.  Below that every spacing
+    #: derived from the width collapses towards zero, and a technique that lays
+    #: one stroke per pen width tries to fill the page - a quarter of a million
+    #: strokes and an eighteen-hour plot, from one slider.
+    MIN_WIDTH = 0.03
+
+    def __setattr__(self, name: str, value) -> None:
+        # on assignment, not just on construction: the width is set from the
+        # panel, from a preset and from a settings file, and only one of those
+        # goes through __init__
+        if name == "width":
+            try:
+                value = max(float(value), self.MIN_WIDTH)
+            except (TypeError, ValueError):
+                value = 0.5
+        object.__setattr__(self, name, value)
+
     @property
     def rgb(self) -> tuple[float, float, float]:
         return hex_to_rgb(self.color)

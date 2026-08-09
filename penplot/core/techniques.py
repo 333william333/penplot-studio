@@ -591,9 +591,16 @@ def _render_halftone(image: np.ndarray, p: dict, ctx: Context) -> list[np.ndarra
     rings = max(int(p["rings"]), 1)
     shape = p["shape"]
 
+    # The same ceiling stipple and dot shading have.  Without it a fine nib
+    # asks for a dot every 0.05 mm: a quarter of a million circles, eighteen
+    # hours of plotting, and a preview the machine cannot hold.
+    budget = MAX_DOTS
+
     out: list[np.ndarray] = []
     for row in range(-steps // 2, steps // 2 + 1):
         ctx.check()
+        if len(out) >= budget:
+            break
         for column in range(-steps // 2, steps // 2 + 1):
             local = np.array([column * cell, row * cell])
             x = centre[0] + local[0] * ca - local[1] * sa
@@ -929,7 +936,7 @@ def _render_scribble(image: np.ndarray, p: dict, ctx: Context) -> list[np.ndarra
         score = np.where(reachable, score, -1.0)
         # a gentle pull towards going straight keeps the line from knotting up
         score -= np.abs(candidates) / max(turn_limit, 1e-6) * p["straight_bias"]
-        score += rng.normal(0.0, p["chaos"], score.shape)
+        score += rng.normal(0.0, max(p["chaos"], 0.0), score.shape)
 
         best = int(np.argmax(score))
         if not reachable[best] or score[best] < min_ink * 0.5:

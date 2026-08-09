@@ -772,5 +772,11 @@ def build_project(
         if stats.out_of_bounds:
             result.warnings.append("Part of the drawing sticks out past the bed.")
     _warn_if_too_fine(result, ordered, library)
+    if stats.path_count > 60000 or stats.estimated_seconds > 6 * 3600:
+        result.warnings.append(
+            f"That is {stats.path_count:,} strokes and about "
+            f"{stats.estimated_seconds / 3600:.1f} hours of plotting. A wider pen or a "
+            f"coarser setting will bring it down quickly."
+        )
     stats.build_seconds = time.perf_counter() - started
     return result

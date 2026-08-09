@@ -188,13 +188,19 @@ class ConnectionPanel(QWidget):
         # ---- pen height ----
         calibration = Card("PEN HEIGHT")
         calibration.add(hint_label(
-            "1. Home X and Y.   2. Put a sheet of paper down.   3. Jog Z down in 0.05 mm steps "
-            "until the pen just marks the paper.   4. Press the button below."
+            "Everything is measured from the height where the tip touches the paper. "
+            "Set it before every drawing - it does not survive a power cycle."
         ))
-        set_zero = QPushButton("Use this height as drawing Z")
-        set_zero.setObjectName("Primary")
+        wizard = QPushButton("Set the pen height…")
+        wizard.setObjectName("Primary")
+        wizard.clicked.connect(self._open_wizard)
+        calibration.add(wizard)
+        self._manual_widgets.append(wizard)
+        set_zero = QPushButton("Use the height it is at now")
+        set_zero.setToolTip("Skip the wizard: take the current Z as the drawing height")
         set_zero.clicked.connect(self._set_zero)
         calibration.add(set_zero)
+        self._manual_widgets.append(set_zero)
         self.zero_label = QLabel("")
         self.zero_label.setObjectName("Hint")
         calibration.add(self.zero_label)
@@ -314,6 +320,8 @@ class ConnectionPanel(QWidget):
         )
         if answer == QMessageBox.Ok:
             self.printer.send("M84")
+            self.zero_label.setText("Pen height lost with the motors - set it again before drawing.")
+            self.zero_label.setStyleSheet(f"color: {theme.WARNING};")
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
@@ -388,11 +396,25 @@ class ConnectionPanel(QWidget):
         pen = self.settings.pen
         self.printer.send(f"G1 Z{pen.draw_z + pen.lift:.2f} F{self.settings.machine.z_feed:.0f}")
 
+    def _open_wizard(self) -> None:
+        from ..pen_height_dialog import ask_to_calibrate
+
+        if ask_to_calibrate(self, self.settings, self.printer):
+            self._mark_zeroed()
+
     def _set_zero(self) -> None:
         self.settings.pen.draw_z = 0.0
         self.settings.pen.zero_z_at_start = True
         self.printer.send("G92 Z0")
-        self.zero_label.setText("Drawing Z is now 0 - the pen height is set. Keep the printer powered on.")
+        self.printer.pen_zeroed = True
+        self._mark_zeroed()
+
+    def _mark_zeroed(self) -> None:
+        self.zero_label.setText(
+            "✓ Pen height set. Drawing Z is 0 here. Keep the printer powered on and do "
+            "not release the motors."
+        )
+        self.zero_label.setStyleSheet(f"color: {theme.SUCCESS};")
         self.settings_changed.emit()
 
     def _send_command(self) -> None:

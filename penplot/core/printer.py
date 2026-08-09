@@ -42,6 +42,14 @@ class PortInfo:
         return f"{self.device}  -  {self.description}" if self.description else self.device
 
 
+def _num(value: float) -> str:
+    """Trim a float for the wire without eating a digit: 10.0 -> "10", not "1"."""
+    text = f"{value:.3f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def available_ports() -> list[PortInfo]:
     """Serial ports, with the likely printer ports first."""
     if list_ports is None:
@@ -483,7 +491,7 @@ class _Worker(QObject):
             target += max(lift + self.live_lift_delta, 0.1)
         # role "draw" is a modulated drawing move: it already carries its own
         # height, and only needs the live offset added
-        return re.sub(r"Z-?\d+(?:\.\d+)?", f"Z{target:.3f}".rstrip("0").rstrip("."), line, count=1)
+        return re.sub(r"Z-?\d+(?:\.\d+)?", f"Z{_num(target)}", line, count=1)
 
     def _should_send(self, line: str) -> bool:
         stripped = line.strip()
@@ -644,6 +652,10 @@ class PrinterLink(QObject):
 
         self._is_connected = False
         self._port = ""
+        #: has the operator zeroed the pen on the paper since connecting?
+        #: The G92 reference does not survive a power cycle or an M84, so this
+        #: is deliberately not persisted.
+        self.pen_zeroed = False
         self.thread.start()
 
     # ---------------- API ------------------------------------------------
@@ -687,6 +699,9 @@ class PrinterLink(QObject):
         self._cancel.emit(bool(lift))
 
     def send(self, command: str) -> None:
+        head = command.strip().upper()
+        if head.startswith("M84") or head.startswith("M18") or head.startswith("M112"):
+            self.pen_zeroed = False   # the motors let go; the reference is gone
         self._manual.emit(command)
 
     def set_protocol(self, use_checksums: bool) -> None:
@@ -705,9 +720,11 @@ class PrinterLink(QObject):
     def _on_connected(self, port: str) -> None:
         self._is_connected = True
         self._port = port
+        self.pen_zeroed = False
         self.connected.emit(port)
 
     def _on_disconnected(self, reason: str) -> None:
         self._is_connected = False
+        self.pen_zeroed = False
         self._port = ""
         self.disconnected.emit(reason)

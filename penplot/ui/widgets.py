@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Sequence
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -42,6 +42,7 @@ __all__ = [
     "swatch_icon",
     "heading",
     "hint_label",
+    "fit_text",
 ]
 
 
@@ -177,6 +178,28 @@ class Card(QFrame):
         return button
 
 
+def fit_text(label: QLabel, minimum_points: float = 8.0) -> None:
+    """Shrink a label's type until its text fits, rather than cutting it off.
+
+    A clipped word reads as a broken program; the same word a point smaller
+    reads as a tight layout.  Only ever shrinks, never grows past the size the
+    label was given.
+    """
+    available = label.width() or label.maximumWidth()
+    if available <= 0 or not label.text():
+        return
+    font = QFont(label.font())
+    base = font.pointSizeF() if font.pointSizeF() > 0 else 11.0
+    size = base
+    while size > minimum_points:
+        metrics = QFontMetricsF(font)
+        if metrics.horizontalAdvance(label.text()) <= available:
+            break
+        size -= 0.5
+        font.setPointSizeF(size)
+    label.setFont(font)
+
+
 class FieldRow(QWidget):
     """Label on the left, control on the right, optional hint underneath."""
 
@@ -195,6 +218,9 @@ class FieldRow(QWidget):
             self.label.setMinimumWidth(label_width)
             self.label.setMaximumWidth(label_width)
             self.label.setWordWrap(True)
+            # two lines are fine; a third would be cut off, so shrink instead
+            if len(label) > 18:
+                fit_text(self.label, minimum_points=9.0)
             line.addWidget(self.label, 0, Qt.AlignVCenter)
         else:
             self.label = None

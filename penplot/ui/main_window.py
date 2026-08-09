@@ -10,6 +10,7 @@ import os
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QTabBar,
     QApplication,
     QButtonGroup,
     QComboBox,
@@ -187,6 +188,7 @@ class MainWindow(QMainWindow):
         for dock in (layout_dock, pens, printer):
             self.tabifyDockWidget(technique, dock)
         technique.raise_()
+        self._tidy_dock_tabs()
         self.resizeDocks([technique, layers], [theme.px(520), theme.px(300)], Qt.Vertical)
         self.resizeDocks([image, technique], [theme.px(320), theme.px(346)], Qt.Horizontal)
 
@@ -195,6 +197,28 @@ class MainWindow(QMainWindow):
         self._set_stage(0)
         self._default_state = self.saveState()
         self._restore_layout()
+
+    def _tidy_dock_tabs(self) -> None:
+        """Let the dock tabs read.
+
+        Qt elides tabified dock titles by default, so "Technique" became
+        "Techn…" in a bar with room to spare.  Scroll buttons are the honest
+        alternative: full labels when they fit, arrows when the dock has
+        genuinely been dragged too narrow.  Expanding spreads them over the
+        whole bar instead of leaving a quarter of it empty.
+        """
+        for bar in self.findChildren(QTabBar):
+            if bar.parent() is not self:
+                continue        # a QTabWidget's own bar, not the dock group
+            bar.setElideMode(Qt.ElideNone)
+            bar.setUsesScrollButtons(True)
+            bar.setExpanding(True)
+            bar.setDrawBase(False)
+
+    def showEvent(self, event) -> None:   # noqa: N802 - Qt
+        super().showEvent(event)
+        # the dock tab bar is created lazily, so once more when it exists
+        self._tidy_dock_tabs()
 
     def _dock_for(self, title: str, widget: QWidget, area, minimum: int) -> QDockWidget:
         dock = QDockWidget(title, self)
@@ -1271,11 +1295,35 @@ class MainWindow(QMainWindow):
         # warnings belong here, not in a status bar the dialog is about to cover
         for warning in getattr(program, "warnings", []):
             message += f"⚠  {warning}\n\n"
-        if self.settings.pen.zero_z_at_start:
-            message += (
-                "The first pen must already be touching the paper - that height becomes Z0.\n"
-                "Use the Pen height helper in the Monitor stage if you have not set it yet."
+        if self.settings.pen.zero_z_at_start and not getattr(self.printer, "pen_zeroed", False):
+            # Without a reference the file homes, lifts and then draws the whole
+            # picture in the air - which reads as "it only goes up in Z".
+            from .pen_height_dialog import ask_to_calibrate
+
+            box = QMessageBox(self)
+            box.setWindowTitle("The pen height is not set")
+            box.setIcon(QMessageBox.Warning)
+            box.setText("The pen height has not been set since you connected.")
+            box.setInformativeText(
+                "This file takes the height the pen is at right now as Z0. If the pen is "
+                "not touching the paper, the printer will lift and draw the whole picture "
+                "in mid-air without ever marking anything."
             )
+            setup = box.addButton("Set the pen height…", QMessageBox.AcceptRole)
+            anyway = box.addButton("It is already touching", QMessageBox.DestructiveRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(setup)
+            box.exec()
+            if box.clickedButton() is setup:
+                if not ask_to_calibrate(self, self.settings, self.printer):
+                    return
+            elif box.clickedButton() is anyway:
+                self.printer.pen_zeroed = True
+            else:
+                return
+
+        if self.settings.pen.zero_z_at_start:
+            message += "The pen height is set. Z0 is where the tip is now."
         else:
             message += "Z is used as the printer currently has it. Make sure the pen is safely above the bed."
 
