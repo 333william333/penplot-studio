@@ -51,6 +51,21 @@ class PortInfo:
         return f"{self.device}  -  {self.description}" if self.description else self.device
 
 
+def _without_comment(command: str) -> str:
+    """Drop a trailing `; comment`.
+
+    Marlin sets comment mode at the first ';' and throws away everything after
+    it - including the `*checksum` we so carefully appended.  A numbered line
+    then arrives with no checksum at all and is rejected with
+    "Error:No Checksum with line number", which is a resend loop that never
+    converges.  Twelve of the twenty-one lines in a plain job carried comments,
+    `G90 ; absolute positioning` among them: the one command that would have
+    put the machine back into absolute mode was the one the firmware threw
+    away, so every pen lift stayed relative and Z climbed for ever.
+    """
+    return command.split(";", 1)[0].strip()
+
+
 def _num(value: float) -> str:
     """Trim a float for the wire without eating a digit: 10.0 -> "10", not "1"."""
     text = f"{value:.3f}"
@@ -96,6 +111,7 @@ class _Worker(QObject):
     position = Signal(float, float, float)
     measured = Signal(float, float, float)   # a real M114 reply, not a guess
     reference_lost = Signal()                # motors released: Z means nothing now
+    firmware_seen = Signal(str)              # profile key implied by M115
     state = Signal(str)
 
     def __init__(self) -> None:
@@ -178,6 +194,7 @@ class _Worker(QObject):
         self.stall_nudges = 0
         self.start_deadline = self.opened_at + 5.0
         self.log.emit(f"Opened {port} at {baud} baud", "info")
+        self.send_manual("M115")     # who are we talking to?
         self.connected.emit(port)
         self.state.emit("connected")
 
@@ -305,17 +322,32 @@ class _Worker(QObject):
     def _reset_line_numbers(self) -> None:
         """Agree with the firmware on where the line numbering starts.
 
-        This is sent *without* a line number of its own.  Firmwares disagree
-        about whether `N1 M110 N0` means "the last line was 1" or "the last
-        line was 0", and guessing wrong desynchronises every following line.
-        An unnumbered M110 goes straight to the firmware's own M110 handler,
-        which simply takes the N value out of the command - no ambiguity.
+        It used to go out bare, as `M110 N0`, on the theory that an unnumbered
+        command reaches the M110 handler without any argument about what the
+        number means.  Creality's stock firmware disagrees, and it is right to:
+        it looks for an 'N' anywhere on the line, finds the one in `N0`, and
+        demands the checksum that goes with a numbered line.  Tested against
+        the machine itself:
+
+            > M110 N0            <- Error:No Checksum with line number
+            > N0 M110 N0*125     <- ok
+
+        Every reset was therefore refused, the firmware kept its old counter,
+        and the very first line of the job came in with the wrong number.  The
+        resend that followed was refused for the same reason, which is a loop
+        that only ends when the host gives up and aborts.
+
+        M110 is exempt from the "must be last+1" rule in every firmware that
+        implements it, so carrying its own N0 is safe.
         """
         self.history.clear()
         self.pending.clear()
         self.resend_from = None
         self.line_number = 0
-        self._write_plain("M110 N0")
+        if not self.use_checksums:
+            return          # nothing is numbered, so there is nothing to agree on
+        body = "N0 M110 N0"
+        self._write_plain(f"{body}*{self._checksum(body)}")
 
     def _checksum(self, text: str) -> int:
         checksum = 0
@@ -355,6 +387,9 @@ class _Worker(QObject):
 
     def _write_raw(self, command: str) -> None:
         if self.serial is None:
+            return
+        command = _without_comment(command)
+        if not command:
             return
         if not self.use_checksums:
             self._write_plain(command)
@@ -528,6 +563,13 @@ class _Worker(QObject):
             self.log.emit("Printer ready", "info")
             self._reset_line_numbers()
             return
+        if "firmware_name" in lowered:
+            self.log.emit(stripped[:120], "rx")
+            # "Marlin V1; Sprinter/grbl mashup for gen6" is the stock Creality
+            # build.  It takes M204 S, not P/T, and has no junction deviation.
+            old = "sprinter" in lowered or "marlin v1" in lowered
+            self.firmware_seen.emit("marlin1" if old else "marlin")
+            return
         if "x:" in lowered and "z:" in lowered:
             # M114: "X:110.00 Y:110.00 Z:4.35 E:0.00 Count: ..."  The machine is
             # the only honest source for the pen height reference, so take it
@@ -574,8 +616,8 @@ class _Worker(QObject):
         return re.sub(r"Z-?\d+(?:\.\d+)?", f"Z{_num(target)}", line, count=1)
 
     def _should_send(self, line: str) -> bool:
-        stripped = line.strip()
-        if not stripped or stripped.startswith(";"):
+        stripped = _without_comment(line)
+        if not stripped:
             return False
         if self.skip_m0 and stripped.upper().startswith("M0"):
             return False
@@ -698,6 +740,7 @@ class PrinterLink(QObject):
     position = Signal(float, float, float)
     measured = Signal(float, float, float)
     reference_lost = Signal()
+    firmware_seen = Signal(str)
     state_changed = Signal(str)
 
     _open = Signal(str, int)
@@ -728,6 +771,7 @@ class PrinterLink(QObject):
         self.worker.position.connect(self.position)
         self.worker.measured.connect(self._on_measured)
         self.worker.reference_lost.connect(self._on_reference_lost)
+        self.worker.firmware_seen.connect(self.firmware_seen)
         self.worker.state.connect(self.state_changed)
 
         self._open.connect(self.worker.open_port)

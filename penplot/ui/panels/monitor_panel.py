@@ -229,6 +229,7 @@ class ConnectionPanel(QWidget):
 
         outer.addStretch(1)
 
+        self.printer.firmware_seen.connect(self._on_firmware)
         self.printer.connected.connect(self._on_connected)
         self.printer.disconnected.connect(self._on_disconnected)
         self.printer.state_changed.connect(self._on_state)
@@ -292,6 +293,19 @@ class ConnectionPanel(QWidget):
         self.settings_changed.emit()
         self.printer.set_protocol(self.settings.machine.use_checksums)
         self.printer.connect_to(port, self.settings.machine.baud)
+
+    def _on_firmware(self, key: str) -> None:
+        """Believe the machine over the drop-down."""
+        from ...core.profiles import FIRMWARES
+
+        if key == self.settings.machine.firmware:
+            return
+        self.settings.machine.firmware = key
+        self.status.emit(
+            f"The printer reports {FIRMWARES.get(key, key)} - switched the firmware "
+            "profile to match."
+        )
+        self.settings_changed.emit()
 
     def _on_connected(self, port: str) -> None:
         self.connect_button.setText("Disconnect")

@@ -105,6 +105,15 @@ class FakeMarlin(threading.Thread):
         if wanted != checksum:
             self.bad_checksums.append(line)
 
+        # M110 carries its own line number and is exempt from the sequence
+        # rule, exactly as in firmware - stock Creality refuses a bare
+        # "M110 N0" because it finds the N and then wants a checksum.
+        inner = re.search(r"M110.*?N(\d+)", body)
+        if inner:
+            self.expected = int(inner.group(1)) + 1
+            self._reply(b"ok\n")
+            return
+
         if self.mode == "silent" and len(self.received) >= 10:
             self.went_silent = True
             return

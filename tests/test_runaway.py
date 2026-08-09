@@ -98,8 +98,10 @@ idle.start_deadline = 0
 for _ in range(4000):
     idle._tick()
 assert abs(port.z) < 1e-6, f"Z moved {port.z:+.1f} mm on connect"
-assert len(port.sent) == 1, f"{len(port.sent)} lines went out on connect: {port.sent[:5]}"
-print(f"  ok   nothing reached the wire but {port.sent[0]}, Z moved {port.z:+.1f} mm")
+moves = [l for l in port.sent if re.search(r"\b(G0|G1|G28|G92)\b", l.upper())]
+assert not moves, f"motion went out on connect: {moves}"
+print(f"  ok   only {', '.join(l.split('*')[0] for l in port.sent)} went out; "
+      f"Z moved {port.z:+.1f} mm")
 
 
 print("\na printer that stops answering mid-job")
@@ -144,7 +146,7 @@ class PickyPort(FakePort):
             if not line.strip():
                 continue
             self.sent.append(line)
-            if line.startswith("M110"):
+            if "M110" in line:          # exempt from the sequence rule, as in firmware
                 self.synced = True
                 self.rx += b"ok\n"
                 continue
@@ -178,5 +180,73 @@ assert picky.accepted_lifts == 1, (
     f"the pen was left on the paper: {picky.accepted_lifts} lifts accepted"
 )
 print(f"  ok   the pen came up ({picky.z:+.1f} mm) even though the counter had drifted")
+
+
+print("\nMarlin's own parser rules")
+
+
+class StrictMarlin(FakePort):
+    """Parses the way queue.cpp does.
+
+    Comment mode is entered at the first ';' and everything after it is thrown
+    away, so a checksum written after a comment never arrives.  A line that
+    starts with N and has no '*' is refused with STR_ERR_NO_CHECKSUM.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.refused: list[str] = []
+        self.executed: list[str] = []
+
+    def write(self, data: bytes) -> int:
+        for raw in data.decode().splitlines():
+            if not raw.strip():
+                continue
+            self.sent.append(raw)
+            line = raw.split(";", 1)[0]          # comment mode eats the rest
+            if line.lstrip().startswith("N") and "M110" not in line:
+                if "*" not in line:
+                    self.refused.append(raw)
+                    self.rx += b"Error:No Checksum with line number, Last Line: 0\n"
+                    continue
+                body, _, given = line.rpartition("*")
+                checksum = 0
+                for char in body:
+                    checksum ^= ord(char)
+                if int(given) != (checksum & 0xFF):
+                    self.refused.append(raw)
+                    self.rx += b"Error:checksum mismatch, Last Line: 0\n"
+                    continue
+                line = re.sub(r"^\s*N\d+\s+", "", body)
+            self.executed.append(line.strip())
+            body = line.strip().upper()
+            if body.startswith("G91"):
+                self.relative = True
+            elif body.startswith("G90"):
+                self.relative = False
+            elif body.startswith(("G0", "G1")):
+                match = re.search(r"Z(-?\d+(?:\.\d+)?)", body)
+                if match:
+                    value = float(match.group(1))
+                    self.z = self.z + value if self.relative else value
+            self.rx += b"ok\n"
+        return len(data)
+
+
+strict = StrictMarlin()
+worker = _worker(strict)
+worker.relative = True
+worker.send_manual("G91")                      # leave it relative, as a jog would
+for _ in range(200):
+    worker._tick()
+worker.start_job(program.lines, program.drawn_at, program.pause_at, program.z_at, True)
+for _ in range(60000):
+    worker._tick()
+assert not strict.refused, (
+    f"{len(strict.refused)} lines refused by the firmware, first: {strict.refused[0]!r}"
+)
+assert "G90" in strict.executed, "the machine never got out of relative mode"
+assert strict.z <= settings.machine.max_z, f"Z reached {strict.z:.0f} mm"
+print(f"  ok   {len(strict.executed)} lines accepted, 0 refused, Z stayed at {strict.z:+.2f} mm")
 
 print("\nall checks passed")

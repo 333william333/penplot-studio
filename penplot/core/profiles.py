@@ -19,6 +19,7 @@ __all__ = ["FIRMWARES", "MachineProfile", "PROFILES", "profile_names", "find_pro
 
 FIRMWARES: dict[str, str] = {
     "marlin": "Marlin / Marlin-compatible",
+    "marlin1": "Marlin 1.0 (Creality stock)",
     "klipper": "Klipper",
     "rrf": "RepRapFirmware (Duet)",
     "grbl": "GRBL",
@@ -45,6 +46,19 @@ class Firmware:
 
 FIRMWARE_RULES: dict[str, Firmware] = {
     "marlin": Firmware("marlin", FIRMWARES["marlin"]),
+    # What ships on a stock Ender 3: "Marlin V1; Sprinter/grbl mashup for gen6".
+    # Measured against the machine - M204 P is silently ignored and T means
+    # retract acceleration, so P/T sets nothing and lies about setting it.
+    # There is no separate travel acceleration and no junction deviation; the
+    # corner behaviour is jerk (M205 X/Z).
+    "marlin1": Firmware(
+        "marlin1",
+        FIRMWARES["marlin1"],
+        acceleration="S",
+        junction_deviation=False,
+        bed_mesh="",               # no stored mesh on stock firmware
+        notes="Stock Creality firmware: one acceleration for drawing and travel.",
+    ),
     "klipper": Firmware(
         "klipper",
         FIRMWARES["klipper"],
