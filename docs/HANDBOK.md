@@ -49,6 +49,13 @@ hemas Z aldrig. Istället **mäts** höjden där spetsen nuddar papperet en gån
 sparas som en maskinkoordinat. Varje jobb åker sedan rakt till den höjden – du kan
 skicka samma bild hur många gånger som helst.
 
+> **Varför guiden börjar med `G92 Z50`.** Marlin vägrar köra Z under noll, och
+> noll är den höjd vagnen råkade stå på när skrivaren slogs på. Uppmätt på en
+> Ender 3 med Creality-firmware: begär `Z-1` från ett färskt `G92 Z0` och den
+> står kvar på `Z0.00`. Utan att först göra plats går det alltså inte att jogga
+> pennan ner till papperet över huvud taget. Guiden deklarerar därför 50 mm
+> utrymme innan något mäts – en gång, och jobbet upprepar det aldrig.
+
 I fliken **Printer**:
 
 1. Välj USB-porten och tryck **Connect**.

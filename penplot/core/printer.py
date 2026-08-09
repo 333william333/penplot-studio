@@ -574,7 +574,11 @@ class _Worker(QObject):
             # M114: "X:110.00 Y:110.00 Z:4.35 E:0.00 Count: ..."  The machine is
             # the only honest source for the pen height reference, so take it
             # from here rather than from what we think we sent.
-            found = dict(re.findall(r"([XYZ]):\s*(-?\d+(?:\.\d+)?)", stripped.upper()))
+            # Only the logical position, not the "Count X: ..." stepper echo that
+            # follows it.  The two differ by exactly the G92 offset, and taking
+            # the wrong one puts the pen off by however much room we made.
+            head = stripped.upper().split("COUNT")[0]
+            found = dict(re.findall(r"([XYZ]):\s*(-?\d+(?:\.\d+)?)", head))
             if len(found) >= 3:
                 self.last_position = [float(found["X"]), float(found["Y"]), float(found["Z"])]
                 self.position.emit(*self.last_position)

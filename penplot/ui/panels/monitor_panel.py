@@ -405,6 +405,19 @@ class ConnectionPanel(QWidget):
 
     def _jog(self, dx: float, dy: float, dz: float) -> None:
         feed = self.settings.machine.travel_feed if dz == 0 else self.settings.machine.z_feed
+        if dz < 0:
+            # Marlin will not take Z below zero, and zero is wherever the gantry
+            # stood at power-on, so Z-down quietly stops working.  Move the floor.
+            from ..pen_height_dialog import HEADROOM
+
+            here = self.printer.machine_z
+            if here is not None and here + dz < 1.0:
+                self.printer.send(f"G92 Z{HEADROOM:.0f}")
+                self.printer.query_position()
+                self.status.emit(
+                    f"Z had no room left below it - the current height is now Z{HEADROOM:.0f}, "
+                    "so the pen can keep coming down."
+                )
         parts = []
         if dx:
             parts.append(f"X{dx:.3f}")
@@ -419,6 +432,7 @@ class ConnectionPanel(QWidget):
         self.printer.send("G90")
 
     def _home_xy(self) -> None:
+        self.printer.query_position()
         self.printer.send("G91")
         self.printer.send(f"G1 Z{max(self.settings.pen.lift, 2.0) + 2:.2f} F{self.settings.machine.z_feed:.0f}")
         self.printer.send("G90")

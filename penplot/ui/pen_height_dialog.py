@@ -36,6 +36,20 @@ __all__ = ["PenHeightDialog", "ask_to_calibrate"]
 #: whether the pen kisses the paper or digs into it.
 Z_STEPS = [5.0, 1.0, 0.25, 0.05]
 
+#: Room to come down in, in millimetres.
+#:
+#: Marlin clamps Z at Z_MIN_POS and stock Creality firmware does it whether or
+#: not the axis has ever been homed - measured on the machine: asked for Z-1
+#: from a fresh G92 Z0 and it sat at Z0.00 and refused.  Since the firmware
+#: calls wherever the gantry happens to be at power-on "Z0", the pen can never
+#: be jogged lower than the height the printer was switched on at.  If the tip
+#: was not already touching the paper then, calibration is impossible.
+#:
+#: So the wizard declares itself some headroom first.  This is the one honest
+#: use of G92 in the whole app: it happens once, before anything is measured,
+#: and the job never repeats it.
+HEADROOM = 50.0
+
 
 class PenHeightDialog(QDialog):
     def __init__(self, settings: AppSettings, printer: PrinterLink, parent=None):
@@ -69,8 +83,9 @@ class PenHeightDialog(QDialog):
         # ---- 1. home -----------------------------------------------------
         step1 = Card("1 · HOME THE CARRIAGE")
         step1.add(hint_label(
-            "Lifts the pen a little, then homes X and Y. Z is never homed: on this "
-            "machine that would drive the pen straight into the bed."
+            "Lifts the pen a little, homes X and Y, and gives the Z axis room to come "
+            "down in. Z is never homed: on this machine that would drive the pen "
+            "straight into the bed."
         ))
         home = QPushButton("Home X and Y")
         home.clicked.connect(self._home)
@@ -89,7 +104,8 @@ class PenHeightDialog(QDialog):
         step3 = Card("3 · LOWER THE PEN")
         step3.add(hint_label(
             "Come down in big steps while there is a gap, then in 0.25 and 0.05 mm steps "
-            "until the tip just touches. It should mark the paper without bending."
+            "until the tip just touches. It should mark the paper without bending. "
+            "More room is made automatically if you run out."
         ))
         grid = QGridLayout()
         grid.setSpacing(theme.px(4))
@@ -151,8 +167,15 @@ class PenHeightDialog(QDialog):
         self.printer.send(f"G1 Z{max(self.settings.pen.lift, 2.0) + 2:.2f} F{self._z_feed()}")
         self.printer.send("G90")
         self.printer.send("G28 X Y")
+        self._make_room()
         self._travelled = 0.0
         self._update_travel()
+
+    def _make_room(self) -> None:
+        """Give the axis somewhere to go down to. See HEADROOM."""
+        self.printer.send(f"G92 Z{HEADROOM:.0f}")
+        self.printer.query_position()
+        self._z_at_open = HEADROOM
 
     def _centre(self) -> None:
         machine = self.settings.machine
@@ -166,6 +189,13 @@ class PenHeightDialog(QDialog):
         self._update_travel()
 
     def _jog(self, delta: float) -> None:
+        # About to run into the floor of the coordinate system?  Move the floor.
+        # The alternative is a button that silently stops working, which is what
+        # "impossible to calibrate" felt like.
+        here = self.printer.machine_z
+        if delta < 0 and here is not None and here + delta < 1.0:
+            self._make_room()
+            self._travelled = 0.0
         self.printer.send("G91")
         self.printer.send(f"G1 Z{delta:.3f} F{self._z_feed()}")
         self.printer.send("G90")
@@ -193,7 +223,10 @@ class PenHeightDialog(QDialog):
         else:
             moved = f"Raised {self._travelled:.2f} mm"
         if self.printer.machine_z is not None:
-            moved += f"   ·   machine Z {self.printer.machine_z:.2f}"
+            moved += (
+                f"   ·   Z {self.printer.machine_z:.2f}"
+                f", {self.printer.machine_z:.0f} mm room left below"
+            )
         self.travel_label.setText(moved)
 
     def _test_line(self) -> None:
