@@ -68,8 +68,10 @@ def _scroll(widget: QWidget, width: int = 330) -> QScrollArea:
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(9, 9, 9, 9)
     layout.setSpacing(7)
-    layout.addWidget(widget)
-    layout.addStretch(1)
+    # The panel is handed the whole column and decides what grows inside it.
+    # Pinned to its sizeHint with a stretch underneath, JobPanel's console sat
+    # at its 220 px minimum with 496 px of blank below it.
+    layout.addWidget(widget, 1)
     area.setWidget(holder)
     # Pinned width: letting the side columns grow squeezed the preview toolbar
     # until its buttons were cut in half on a smaller screen.
@@ -222,6 +224,44 @@ class MainWindow(QMainWindow):
         # the dock tab bar is created lazily, so once more when it exists
         self._tidy_dock_tabs()
 
+    def _size_technique_strip(self) -> None:
+        """One row of tiles, whole.
+
+        As tall as a tile plus the horizontal bar it pages with.  A pinned
+        number clipped the captions off the bottom, and the vertical bar is
+        switched off, so there was no way to reach them - one press of "bigger
+        interface" was enough to lose them again.
+        """
+        area = self.technique_strip
+        card = area.widget()
+        card.layout().activate()
+        area.setFixedHeight(
+            card.sizeHint().height()
+            + area.horizontalScrollBar().sizeHint().height()
+            + 2 * area.frameWidth()
+        )
+        holder = self._strip_host.widget()
+        holder.layout().activate()
+        self._strip_host.setMinimumHeight(holder.sizeHint().height())
+
+    @staticmethod
+    def _fit_dock_width(holder, minimum: int) -> None:
+        """Never crop a control sideways.
+
+        The horizontal bar is off in these docks, so a panel whose own minimum
+        is wider than the dock loses the right-hand end of every row with
+        nothing on screen to say so - 327 px of Layout in a 290 px viewport.
+        """
+        inner = holder.widget()
+        panel = inner.layout().itemAt(0).widget()
+        margins = inner.layout().contentsMargins()
+        holder.setMinimumWidth(max(
+            theme.px(minimum),
+            panel.minimumSizeHint().width()
+            + margins.left() + margins.right()
+            + holder.verticalScrollBar().sizeHint().width(),
+        ))
+
     def _dock_for(self, title: str, widget: QWidget, area, minimum: int) -> QDockWidget:
         dock = QDockWidget(title, self)
         dock.setObjectName(f"dock:{title}")
@@ -234,12 +274,11 @@ class MainWindow(QMainWindow):
         box = QVBoxLayout(inner)
         box.setContentsMargins(8, 8, 8, 8)
         box.setSpacing(7)
-        box.addWidget(widget)
-        box.addStretch(1)
+        box.addWidget(widget, 1)
         holder.setWidget(inner)
         # a minimum, not a fixed width: the user drags the edge, the canvas keeps
         # whatever is left over
-        holder.setMinimumWidth(theme.px(minimum))
+        self._fit_dock_width(holder, minimum)
         dock.setWidget(holder)
         self.addDockWidget(area, dock)
         self._docks[title] = dock
@@ -274,12 +313,10 @@ class MainWindow(QMainWindow):
         self.technique_strip = area
         box.addWidget(area)
         strip.setWidget(holder)
-        # Tall enough for the tiles it actually holds.  A fixed 150 px clipped
-        # them, and the scrollbar is off, so the bottom row simply vanished.
-        strip.setMinimumHeight(holder.sizeHint().height() + theme.px(26))
         self.addDockWidget(Qt.BottomDockWidgetArea, strip)
         self._docks["Techniques"] = strip
         self._strip_host = strip
+        self._size_technique_strip()
 
         settings_dock = self._dock_for("Technique", settings_card, Qt.RightDockWidgetArea, 300)
         return settings_dock, settings_card
@@ -1024,13 +1061,16 @@ class MainWindow(QMainWindow):
         filter_control = self.source_panel.group_filter
         filter_control.setMinimumWidth(0)
         filter_control.setMinimumWidth(filter_control.sizeHint().width())
+        self.source_panel.gallery.set_tile_size(theme.px(96))
         for dock in self._docks.values():
             holder = dock.widget()
             if isinstance(holder, QScrollArea):
-                # a minimum, never a fixed width - the dock stays draggable
-                holder.setMinimumWidth(theme.px(300))
-        self._strip_host.setMinimumHeight(theme.px(150))
-        self.source_panel.gallery.set_tile_size(theme.px(96))
+                # a minimum, never a fixed width - the dock stays draggable.
+                # Taken from what the panel needs at the new scale: a flat 300
+                # cropped the right-hand end off every row as soon as the
+                # interface grew.
+                self._fit_dock_width(holder, 300)
+        self._size_technique_strip()
         self.setMinimumSize(theme.px(1100), theme.px(640))
         self.statusBar().showMessage(f"Interface at {theme.SCALE * 100:.0f}%", 2500)
 

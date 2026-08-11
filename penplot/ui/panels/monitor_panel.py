@@ -605,7 +605,8 @@ class JobPanel(QWidget):
             self,
             "Stop the drawing?",
             "The drawing stops where it is and cannot be resumed from that point.\n\n"
-            "The pen height reference is lost, so set it again before starting anything new.",
+            "The pen lifts 10 mm and the pen height stays set, so the next drawing can "
+            "start straight away.",
             QMessageBox.Cancel | QMessageBox.Yes,
             QMessageBox.Cancel,
         )

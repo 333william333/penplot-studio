@@ -719,7 +719,21 @@ class SourcePanel(QWidget):
             show("vary_size", float(values.get("dot_size", 0.0)) > 0.01)
 
     def _reset_params(self) -> None:
-        self.settings.style.params[self.settings.style.technique] = {}
+        """Put the whole card back, not only the rows the registry generates.
+
+        Clearing the stored overrides *is* the reset for a technique's own
+        parameters - techniques.resolve() falls through to each Param.default,
+        so no number is copied here and a default changed in the registry is a
+        default changed in the interface.  Modulate, Amount and Detail sit on
+        this card too and used to survive it, which left the machine still
+        pressing the pen into the paper on every dark pixel.
+        """
+        style = self.settings.style
+        style.params[style.technique] = {}
+        fresh = StyleSettings()
+        for name in ("modulation", "modulation_amount", "detail"):
+            setattr(style, name, getattr(fresh, name))
+        self.binder.refresh()
         self._rebuild_params()
         self._sync_param_visibility()
         self.settings_changed.emit()

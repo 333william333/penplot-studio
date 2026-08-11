@@ -288,6 +288,7 @@ class _Worker(QObject):
         self.is_paused = False
         self.resend_from = None
         self.pending.clear()
+        self.history.clear()      # nothing left to replay a cancelled job from
         self.program_lines = []
         self.program_drawn = []
         self.pause_at = {}
@@ -707,6 +708,11 @@ class _Worker(QObject):
                 self.pending.clear()
 
         # ---- catch up after a resend request before anything new goes out ----
+        if self.resend_from is not None and not self.running:
+            # There is no stream to recover.  Replaying here would re-run the
+            # program that was just stopped, and the loop sits above the
+            # `running` guard, so it would run before anything noticed.
+            self.resend_from = None
         while self.resend_from is not None and len(self.pending) < self.window:
             if self.resend_from > self.line_number:
                 self.resend_from = None
