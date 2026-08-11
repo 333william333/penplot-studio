@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence
 
-from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtCore import QLocale, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -234,6 +234,42 @@ class FieldRow(QWidget):
         self.setVisible(not hidden)
 
 
+class _DecimalSpin(QDoubleSpinBox):
+    """A number box that behaves the same wherever you live.
+
+    Two problems, both reported as "the live controls do not work":
+
+    * The system locale here is en_SE, whose decimal separator is a comma, so
+      typing `-0.50` into an English-language interface produced `-0.00` - the
+      point was refused and the digits after it thrown away.  Both separators
+      are accepted now, and the point is what gets shown.
+    * Qt reinterprets the text on every keystroke by default, so `-0.50` passed
+      through `-`, `-0`, `-0.` ... and the intermediate values were committed
+      and sent to the printer.  The value is now taken when the field is left
+      or Enter is pressed; the arrow keys and the slider still act at once.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setLocale(QLocale.c())
+        self.setKeyboardTracking(False)
+
+    def validate(self, text: str, pos: int):
+        return super().validate(text.replace(",", "."), pos)
+
+    def valueFromText(self, text: str) -> float:
+        return super().valueFromText(text.replace(",", "."))
+
+
+class _IntSpin(QSpinBox):
+    """Integers, with the same "do not commit half a number" rule."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setLocale(QLocale.c())
+        self.setKeyboardTracking(False)
+
+
 class SliderSpin(QWidget):
     """Slider plus numeric entry that stay in sync."""
 
@@ -264,11 +300,11 @@ class SliderSpin(QWidget):
         self.slider.setVisible(show_slider)
 
         if decimals == 0:
-            self.spin: QSpinBox | QDoubleSpinBox = QSpinBox()
+            self.spin: QSpinBox | QDoubleSpinBox = _IntSpin()
             self.spin.setRange(int(minimum), int(maximum))
             self.spin.setSingleStep(max(int(step), 1))
         else:
-            self.spin = QDoubleSpinBox()
+            self.spin = _DecimalSpin()
             self.spin.setRange(minimum, maximum)
             self.spin.setDecimals(decimals)
             self.spin.setSingleStep(step)

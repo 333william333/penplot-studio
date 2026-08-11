@@ -751,6 +751,28 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # rebuild plumbing
     # ------------------------------------------------------------------
+    def _touch_settings(self) -> None:
+        """Something changed - persist it shortly.
+
+        Settings used to be written only from closeEvent, so anything short of a
+        clean quit threw the session away: pen widths, technique parameters, the
+        measured pen height.  Force-quit the app once and it was as if you had
+        never touched it.
+        """
+        if not hasattr(self, "_autosave"):
+            self._autosave = QTimer(self)
+            self._autosave.setSingleShot(True)
+            self._autosave.setInterval(2000)
+            self._autosave.timeout.connect(self._save_settings)
+        self._autosave.start()
+
+    def _save_settings(self) -> None:
+        try:
+            self.settings.window_state = bytes(self.saveState().toBase64()).decode("ascii")
+            self.settings.save()
+        except Exception as exc:            # a full disk must not take the app down
+            self.statusBar().showMessage(f"Could not save settings: {exc}", 4000)
+
     def schedule_rebuild(self) -> None:
         """Something changed: re-draw, on a debounce that follows the cost.
 
@@ -759,6 +781,7 @@ class MainWindow(QMainWindow):
         cheap technique feels instant, an expensive one waits until the user
         stops moving instead of queueing a build per pixel.
         """
+        self._touch_settings()
         if self._suppress_rebuild:
             return
         self._settings_serial += 1
@@ -916,12 +939,14 @@ class MainWindow(QMainWindow):
 
     def _on_machine_settings_changed(self) -> None:
         """Something outside the Prepare stage changed a machine setting."""
+        self._touch_settings()
         self.program = None
         self._path_lines = []
         self.machine_panel.refresh()
         self.schedule_rebuild()
 
     def _on_machine_changed(self) -> None:
+        self._touch_settings()
         self.machine_label.setText(self.settings.machine.name)
         self.schedule_rebuild()
 
@@ -1261,11 +1286,53 @@ class MainWindow(QMainWindow):
         self.settings.last_export_dir = os.path.dirname(path)
         self.statusBar().showMessage(f"Saved {len(program.lines):,} lines to {os.path.basename(path)}", 6000)
 
+    def _check_pen_height(self) -> bool:
+        """True when the machine knows how far the paper is from the tip."""
+        if getattr(self.printer, "pen_zeroed", False):
+            return True
+        before = (self.settings.pen.draw_z, self.settings.pen.zero_z_at_start)
+        # Without a reference the file homes, lifts and then draws the whole
+        # picture in the air - which reads as "it only goes up in Z".
+        from .pen_height_dialog import ask_to_calibrate
+
+        box = QMessageBox(self)
+        box.setWindowTitle("The pen height is not set")
+        box.setIcon(QMessageBox.Warning)
+        box.setText("The pen height has not been set since you connected.")
+        box.setInformativeText(
+            "The machine has no idea how far the paper is from the tip. Without that "
+            "number it will lift and drop the pen for the whole drawing without ever "
+            "marking anything - which looks like the Z axis running away upwards.\n\n"
+            "The reference does not survive a power cycle or releasing the motors, so "
+            "it has to be set once each time the printer is switched on."
+        )
+        setup = box.addButton("Set the pen height…", QMessageBox.AcceptRole)
+        anyway = box.addButton("It is already touching", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(setup)
+        box.exec()
+        if box.clickedButton() is setup:
+            if not ask_to_calibrate(self, self.settings, self.printer):
+                return False
+        elif box.clickedButton() is anyway:
+            # Taking them at their word: the tip is on the paper now, so
+            # touch-off is the honest mode.  Going ahead in measured mode
+            # would send the pen to a machine height from an older session.
+            self.settings.pen.zero_z_at_start = True
+            self.settings.pen.draw_z = 0.0
+            self.printer.pen_zeroed = True
+        else:
+            return False
+        if (self.settings.pen.draw_z, self.settings.pen.zero_z_at_start) != before:
+            self.program = None      # the height changed; the file must follow
+            self._path_lines = []
+        return True
+
     def send_to_printer(self) -> None:
         if self._render_first("send"):
             return
-        program = self._ensure_program()
-        if program is None:
+        if self.job is None or self.job.is_empty:
+            self.statusBar().showMessage("There is nothing to draw yet", 4000)
             return
         if not self.printer.is_connected:
             self._set_stage(1)
@@ -1277,6 +1344,17 @@ class MainWindow(QMainWindow):
             return
 
         if self.job.stats.out_of_bounds and not self._confirm_out_of_bounds("send"):
+            return
+
+        if not self._check_pen_height():
+            return
+
+        # Only now.  Building it earlier baked the old drawing height into the
+        # file: the wizard would measure the paper at, say, Z12.4, and the job
+        # already generated at Z0 would go out anyway and draw the whole picture
+        # twelve millimetres above the sheet.
+        program = self._ensure_program()
+        if program is None:
             return
 
         pens = [self.settings.library[i].name for i in self.job.drawing.used_pens()]
@@ -1295,40 +1373,6 @@ class MainWindow(QMainWindow):
         # warnings belong here, not in a status bar the dialog is about to cover
         for warning in getattr(program, "warnings", []):
             message += f"⚠  {warning}\n\n"
-        if not getattr(self.printer, "pen_zeroed", False):
-            # Without a reference the file homes, lifts and then draws the whole
-            # picture in the air - which reads as "it only goes up in Z".
-            from .pen_height_dialog import ask_to_calibrate
-
-            box = QMessageBox(self)
-            box.setWindowTitle("The pen height is not set")
-            box.setIcon(QMessageBox.Warning)
-            box.setText("The pen height has not been set since you connected.")
-            box.setInformativeText(
-                "The machine has no idea how far the paper is from the tip. Without that "
-                "number it will lift and drop the pen for the whole drawing without ever "
-                "marking anything - which looks like the Z axis running away upwards.\n\n"
-                "The reference does not survive a power cycle or releasing the motors, so "
-                "it has to be set once each time the printer is switched on."
-            )
-            setup = box.addButton("Set the pen height…", QMessageBox.AcceptRole)
-            anyway = box.addButton("It is already touching", QMessageBox.DestructiveRole)
-            box.addButton(QMessageBox.Cancel)
-            box.setDefaultButton(setup)
-            box.exec()
-            if box.clickedButton() is setup:
-                if not ask_to_calibrate(self, self.settings, self.printer):
-                    return
-            elif box.clickedButton() is anyway:
-                # Taking them at their word: the tip is on the paper now, so
-                # touch-off is the honest mode.  Going ahead in measured mode
-                # would send the pen to a machine height from an older session.
-                self.settings.pen.zero_z_at_start = True
-                self.settings.pen.draw_z = 0.0
-                self.printer.pen_zeroed = True
-            else:
-                return
-
         if self.settings.pen.zero_z_at_start:
             message += "Z0 will be taken from where the pen is standing right now."
         elif self.printer.machine_z is not None:
@@ -1634,11 +1678,7 @@ class MainWindow(QMainWindow):
                 return
             self.printer.cancel(True)
 
-        try:
-            self.settings.window_state = bytes(self.saveState().toBase64()).decode("ascii")
-            self.settings.save()
-        except Exception:
-            pass
+        self._save_settings()
         self.printer.shutdown()
         self.runner.shutdown()
         self.tuner.shutdown()

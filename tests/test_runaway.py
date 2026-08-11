@@ -250,3 +250,51 @@ assert strict.z <= settings.machine.max_z, f"Z reached {strict.z:.0f} mm"
 print(f"  ok   {len(strict.executed)} lines accepted, 0 refused, Z stayed at {strict.z:+.2f} mm")
 
 print("\nall checks passed")
+
+
+print("\nthe file must carry the height that was measured, not the one before it")
+
+# A job generated before the pen height was set, then sent afterwards, used to
+# go out unchanged: the wizard measured the paper at Z12.40 and the machine
+# drew the whole picture at Z0, twelve millimetres above the sheet.
+settings.pen.zero_z_at_start = False
+settings.pen.draw_z = 0.0
+stale = gcode.generate(PlotJob(drawing=drawing), settings, settings.library)
+settings.pen.draw_z = 12.4                       # the wizard runs
+fresh = gcode.generate(PlotJob(drawing=drawing), settings, settings.library)
+
+
+def _draw_height(program):
+    heights = []
+    for line, tag in program.z_at.items():
+        if tag[0] == "down":
+            heights.append(tag[1])
+    return min(heights) if heights else None
+
+
+assert _draw_height(stale) == 0.0, _draw_height(stale)
+assert abs(_draw_height(fresh) - 12.4) < 1e-6, _draw_height(fresh)
+print(f"  ok   before {_draw_height(stale):.2f}, after {_draw_height(fresh):.2f} - "
+      "send_to_printer builds the file after the wizard, not before")
+
+print("\ntyping a decimal has to work in a comma locale")
+from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt as _Qt
+from penplot.ui import theme as _theme
+from penplot.ui.widgets import SliderSpin
+
+_theme.apply_theme(app)
+spin = SliderSpin(-1.5, 1.5, decimals=2, step=0.05, suffix="mm")
+spin.show()
+for _ in range(5):
+    app.processEvents()
+for text, expected in (("-0.50", -0.5), ("-0,50", -0.5), ("1.25", 1.25)):
+    spin.spin.setFocus()
+    spin.spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.spin, text)
+    QTest.keyClick(spin.spin, _Qt.Key_Return)
+    app.processEvents()
+    assert abs(spin.value() - expected) < 1e-9, f"typed {text!r}, got {spin.value()}"
+print("  ok   both '.' and ',' accepted, negatives survive")
+
+print("\nall checks passed")
