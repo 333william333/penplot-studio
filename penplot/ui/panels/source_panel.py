@@ -519,7 +519,9 @@ class SourcePanel(QWidget):
         card.add(reset)
         card.add(
             self.binder.slider(
-                self.settings.style, "detail", 200, 2400, label="Detail", decimals=0, step=50,
+                # "style", not the object: captured, it bound Detail to layer 1 for
+                # ever, so it edited and displayed the wrong layer.
+                "style", "detail", 200, 2400, label="Detail", decimals=0, step=50,
                 hint="Working resolution. Higher catches finer detail but takes longer to prepare.",
             )
         )
@@ -619,14 +621,20 @@ class SourcePanel(QWidget):
         that made every tone land in the middle and hatch the whole sheet.
         """
         style = self.settings.style
-        # Every field that shapes the picture, taken from the dataclass rather
-        # than a hand-written list - the list had drifted and left enhance,
-        # detail and the modulation behind, so a "reset" quietly kept them.
+        # The nine controls this card shows, plus `enhance` - the subject filter
+        # a Look switches on, which has no control of its own, so this is the
+        # only way back off it.  Names listed, values from the dataclass, so a
+        # default that moves moves here with it.
+        #
+        # Sweeping *every* style field instead took the Look, the machine
+        # modulation, the working detail and the paper colour with it - four
+        # other cards, none of which the user asked to lose.
         fresh = StyleSettings()
-        for field in dataclasses.fields(fresh):
-            if field.name in ("technique", "params", "separation"):
-                continue        # what to draw and with how many pens is not a filter
-            setattr(style, field.name, getattr(fresh, field.name))
+        for name in (
+            "auto_levels", "brightness", "contrast", "gamma", "black_point",
+            "white_point", "saturation", "blur", "invert", "enhance",
+        ):
+            setattr(style, name, getattr(fresh, name))
         rgb = self._image_rgb
         if rgb is not None:
             try:

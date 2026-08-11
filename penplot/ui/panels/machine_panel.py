@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QComboBox, QVBoxLayout, QWidget
 
 from ...core import profiles
 from ...core.settings import AppSettings
-from ..widgets import Binder, Card, FieldRow, hint_label
+from ..widgets import Binder, Card, FieldRow, FlowLayout, hint_label
 
 
 class MachinePanel(QWidget):
@@ -18,7 +18,9 @@ class MachinePanel(QWidget):
         self.settings = settings
         self.binder = Binder(self.changed.emit, self)
 
-        outer = QVBoxLayout(self)
+        # Cards flow into columns as the dock gets wider - this panel is the
+        # tallest in the app and used to be three screens of scrolling.
+        outer = FlowLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(10)
 
@@ -26,7 +28,7 @@ class MachinePanel(QWidget):
         pen = settings.pen
         optimise = settings.optimize
 
-        pen_card = Card("PEN & Z HEIGHT")
+        pen_card = Card("PEN HEIGHT")
         pen_card.add(self.binder.slider(pen, "draw_z", -5.0, 60.0, label="Drawing Z", decimals=2, step=0.05, suffix="mm"))
         pen_card.add(self.binder.slider(pen, "lift", 0.2, 20.0, label="Lift", decimals=2, step=0.1, suffix="mm",
                                         hint="How far the pen rises for travel moves."))
@@ -35,29 +37,37 @@ class MachinePanel(QWidget):
                                             "the job travels to, so the same file can be sent again and "
                                             "again. On, the job calls the pen's current height Z0 - which "
                                             "silently draws in mid-air if it is not touching the paper."))
-        pen_card.add_heading("Pen change position")
-        pen_card.add(self.binder.slider(pen, "change_z", 5.0, 200.0, label="Z", decimals=0, step=5, suffix="mm"))
-        pen_card.add(self.binder.slider(pen, "change_x", 0.0, 300.0, label="X", decimals=0, step=5, suffix="mm"))
-        pen_card.add(self.binder.slider(pen, "change_y", 0.0, 300.0, label="Y", decimals=0, step=5, suffix="mm"))
-        pen_card.add_heading("Pen lifts")
-        pen_card.add(hint_label(
-            "Lifting the pen is most of the drawing time on this machine. A short "
-            "hop only has to clear the paper."
-        ))
-        pen_card.add(self.binder.slider(pen, "short_hop", 0.0, 30.0, label="Short hop up to", decimals=1, step=0.5, suffix="mm",
-                                        hint="Moves shorter than this use the small lift. 0 turns it off."))
-        pen_card.add(self.binder.slider(pen, "short_lift", 0.05, 5.0, label="Small lift", decimals=2, step=0.05, suffix="mm"))
-
-        pen_card.add_heading("Fine tuning")
-        pen_card.add(self.binder.slider(pen, "down_delay", 0, 1000, label="Settle down", decimals=0, step=10, suffix="ms"))
-        pen_card.add(self.binder.slider(pen, "up_delay", 0, 1000, label="Settle up", decimals=0, step=10, suffix="ms"))
-        pen_card.add(self.binder.slider(pen, "dot_diameter", 0.0, 3.0, label="Dot size", decimals=2, step=0.05, suffix="mm",
-                                        hint="0 dabs a single point for stipple dots; larger draws a tiny circle."))
         pen_card.add(self.binder.check(pen, "scale_with_pen_width", "Everything follows the pen width",
                                        hint="Settings are written for a 0.5 mm pen and scale from there."))
         outer.addWidget(pen_card)
 
-        speed_card = Card("SPEEDS", collapsible=True, expanded=True)
+        # Four small cards rather than one 644 px monolith: the flow layout can
+        # pack small cards into columns, and the two-thirds of this that nobody
+        # touches after the first setup start folded away.
+        change_card = Card("PEN CHANGE POSITION", collapsible=True, expanded=False)
+        change_card.add(self.binder.slider(pen, "change_z", 5.0, 200.0, label="Z", decimals=0, step=5, suffix="mm"))
+        change_card.add(self.binder.slider(pen, "change_x", 0.0, 300.0, label="X", decimals=0, step=5, suffix="mm"))
+        change_card.add(self.binder.slider(pen, "change_y", 0.0, 300.0, label="Y", decimals=0, step=5, suffix="mm"))
+        outer.addWidget(change_card)
+
+        lift_card = Card("PEN LIFTS", collapsible=True, expanded=False)
+        lift_card.add(hint_label(
+            "Lifting the pen is most of the drawing time on this machine. A short "
+            "hop only has to clear the paper."
+        ))
+        lift_card.add(self.binder.slider(pen, "short_hop", 0.0, 30.0, label="Short hop up to", decimals=1, step=0.5, suffix="mm",
+                                         hint="Moves shorter than this use the small lift. 0 turns it off."))
+        lift_card.add(self.binder.slider(pen, "short_lift", 0.05, 5.0, label="Small lift", decimals=2, step=0.05, suffix="mm"))
+        outer.addWidget(lift_card)
+
+        tune_card = Card("PEN FINE TUNING", collapsible=True, expanded=False)
+        tune_card.add(self.binder.slider(pen, "down_delay", 0, 1000, label="Settle down", decimals=0, step=10, suffix="ms"))
+        tune_card.add(self.binder.slider(pen, "up_delay", 0, 1000, label="Settle up", decimals=0, step=10, suffix="ms"))
+        tune_card.add(self.binder.slider(pen, "dot_diameter", 0.0, 3.0, label="Dot size", decimals=2, step=0.05, suffix="mm",
+                                         hint="0 dabs a single point for stipple dots; larger draws a tiny circle."))
+        outer.addWidget(tune_card)
+
+        speed_card = Card("SPEEDS", collapsible=True, expanded=False)
         speed_card.add(self.binder.slider(machine, "draw_feed", 100, 9000, label="Drawing", decimals=0, step=100, suffix="mm/min"))
         speed_card.add(self.binder.slider(machine, "travel_feed", 100, 12000, label="Travel", decimals=0, step=100, suffix="mm/min"))
         speed_card.add(self.binder.slider(machine, "z_feed", 60, 3000, label="Pen up/down", decimals=0, step=60, suffix="mm/min"))
@@ -123,8 +133,6 @@ class MachinePanel(QWidget):
         opt_card.add(self.binder.check(optimise, "tidy_tour", "Extra pass to tidy the order"))
         opt_card.add(self.binder.check(optimise, "allow_reverse", "Allow drawing backwards"))
         outer.addWidget(opt_card)
-
-        outer.addStretch(1)
 
     def _apply_profile(self, index: int) -> None:
         name = self.profile_combo.itemData(index)

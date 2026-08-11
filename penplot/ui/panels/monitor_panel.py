@@ -321,10 +321,24 @@ class ConnectionPanel(QWidget):
         self._update_enabled()
 
     def _on_state(self, state: str) -> None:
+        """Say what the machine is doing now, including when it stopped.
+
+        Only the two busy states used to be handled, so "Drawing…" stayed on the
+        label for the rest of the session - cancel a job and the connection card
+        still insisted the printer was drawing, long after it had parked.
+        """
         if state == "printing":
             self.state_label.setText("Drawing…")
+            self.state_label.setStyleSheet(f"color: {theme.SUCCESS};")
         elif state == "paused":
             self.state_label.setText("Paused")
+            self.state_label.setStyleSheet(f"color: {theme.WARNING};")
+        elif self.printer.is_connected:
+            self.state_label.setText(f"Connected to {self.printer.port}")
+            self.state_label.setStyleSheet(f"color: {theme.SUCCESS};")
+        else:
+            self.state_label.setText("Not connected")
+            self.state_label.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         self._printing = state == "printing"
         self._update_enabled()
 
@@ -511,6 +525,8 @@ class JobPanel(QWidget):
         self._started_at: float | None = None
         self._total_lines = 0
         self._last_line = 0
+        self._paused_at: float | None = None
+        self._paused_for = 0.0
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -600,6 +616,8 @@ class JobPanel(QWidget):
         self._started_at = time.monotonic()
         self._total_lines = total_lines
         self._last_line = 0
+        self._paused_at = None
+        self._paused_for = 0.0
         self._set_running(True)
         self.progress.setValue(0)
         self.headline.setText("Drawing…")
@@ -649,7 +667,10 @@ class JobPanel(QWidget):
         self._started_at = None
 
     def _elapsed(self) -> float:
-        return time.monotonic() - (self._started_at or time.monotonic())
+        held = self._paused_for + (
+            time.monotonic() - self._paused_at if self._paused_at is not None else 0.0
+        )
+        return time.monotonic() - (self._started_at or time.monotonic()) - held
 
     def _set_running(self, running: bool) -> None:
         self.pause_button.setEnabled(running)
@@ -662,6 +683,7 @@ class JobPanel(QWidget):
         if state == "paused":
             self.headline.setText("Paused")
             self.pause_button.setText("Resume")
+            self._paused_at = time.monotonic()
             if self._total_lines:
                 self.detail.setText(
                     f"Paused at {self._last_line:,} of {self._total_lines:,} commands"
@@ -669,6 +691,11 @@ class JobPanel(QWidget):
         elif state == "printing":
             self.headline.setText("Drawing…")
             self.pause_button.setText("Pause")
+            if self._paused_at is not None:
+                # the time spent swapping a pen is not drawing time, and
+                # charging it to the estimate made every remaining figure wrong
+                self._paused_for += time.monotonic() - self._paused_at
+                self._paused_at = None
 
     def _toggle_pause(self) -> None:
         if self.pause_button.text() == "Pause":

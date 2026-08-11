@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ...core.pens import CUTTING_TOOLS, DEFAULT_PALETTES, PEN_KINDS, Pen, PenLibrary
 from ...core.settings import AppSettings
 from .. import theme
-from ..widgets import Binder, Card, ColorButton, FieldRow, hint_label
+from ..widgets import Binder, Card, ColorButton, FieldRow, FlowLayout, hint_label, _DecimalSpin
 
 
 class PenRow(QFrame):
@@ -60,7 +60,7 @@ class PenRow(QFrame):
         self.name.setToolTip(pen.name)
         self.name.textChanged.connect(self._on_name)
 
-        self.width = QDoubleSpinBox()
+        self.width = _DecimalSpin()
         self.width.setRange(0.05, 5.0)
         self.width.setDecimals(2)
         self.width.setSingleStep(0.05)
@@ -199,7 +199,7 @@ class PenRow(QFrame):
 
     @staticmethod
     def _spin(minimum, maximum, step, decimals, suffix, value) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = _DecimalSpin()
         spin.setRange(minimum, maximum)
         spin.setDecimals(decimals)
         spin.setSingleStep(step)
@@ -299,7 +299,8 @@ class PensPanel(QWidget):
         self.library: PenLibrary = settings.library
         self.binder = Binder(self._emit, self)
 
-        outer = QVBoxLayout(self)
+        # Flow, so a wider dock becomes columns instead of a longer scroll.
+        outer = FlowLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(10)
 
@@ -364,7 +365,6 @@ class PensPanel(QWidget):
             "details overrides this one."
         ))
         outer.addWidget(pause_card)
-        outer.addStretch(1)
 
         self.rebuild()
 

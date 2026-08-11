@@ -189,7 +189,9 @@ class MainWindow(QMainWindow):
             self.tabifyDockWidget(technique, dock)
         technique.raise_()
         self._tidy_dock_tabs()
-        self.resizeDocks([technique, layers], [theme.px(520), theme.px(300)], Qt.Vertical)
+        # Layers asks for 190 px and was being given 300, while the settings
+        # tabs underneath it scrolled.  Give the tabs what Layers does not need.
+        self.resizeDocks([technique, layers], [theme.px(600), theme.px(230)], Qt.Vertical)
         self.resizeDocks([image, technique], [theme.px(320), theme.px(346)], Qt.Horizontal)
 
         self._build_status_bar()
@@ -272,7 +274,9 @@ class MainWindow(QMainWindow):
         self.technique_strip = area
         box.addWidget(area)
         strip.setWidget(holder)
-        strip.setMinimumHeight(theme.px(150))
+        # Tall enough for the tiles it actually holds.  A fixed 150 px clipped
+        # them, and the scrollbar is off, so the bottom row simply vanished.
+        strip.setMinimumHeight(holder.sizeHint().height() + theme.px(26))
         self.addDockWidget(Qt.BottomDockWidgetArea, strip)
         self._docks["Techniques"] = strip
         self._strip_host = strip

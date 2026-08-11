@@ -297,4 +297,25 @@ for text, expected in (("-0.50", -0.5), ("-0,50", -0.5), ("1.25", 1.25)):
     assert abs(spin.value() - expected) < 1e-9, f"typed {text!r}, got {spin.value()}"
 print("  ok   both '.' and ',' accepted, negatives survive")
 
+
+print("\nStop has to stop, even with a resend in flight")
+
+# _tick runs the replay loop before it checks `running`, so a Resend that
+# arrived just before Stop used to survive the cancel and the machine calmly
+# redrew the whole history buffer while the escape lift queued behind it.
+stopper = FakePort()
+worker = _worker(stopper)
+worker.start_job(program.lines, program.drawn_at, program.pause_at, program.z_at, True)
+for _ in range(300):
+    worker._tick()
+mid = len(stopper.sent)
+worker.resend_from = 3                 # the printer asked for a replay...
+worker.cancel_job(True)                # ...and the operator pressed Stop
+for _ in range(3000):
+    worker._tick()
+after = [l for l in stopper.sent[mid:] if re.search(r"\bG1\b.*\b[XY]", l.upper())]
+assert not after, f"{len(after)} drawing moves went out after Stop: {after[:3]}"
+assert worker.resend_from is None and not worker.program_lines
+print(f"  ok   nothing drawn after Stop ({len(stopper.sent) - mid} lines out, all escape/park)")
+
 print("\nall checks passed")

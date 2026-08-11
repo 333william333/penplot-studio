@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence
 
-from PySide6.QtCore import QLocale, QObject, QSize, Qt, Signal
+from PySide6.QtCore import QLocale, QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QLayout,
     QButtonGroup,
     QCheckBox,
     QColorDialog,
@@ -43,6 +44,8 @@ __all__ = [
     "heading",
     "hint_label",
     "fit_text",
+    "FlowLayout",
+    "_DecimalSpin",
 ]
 
 
@@ -610,3 +613,97 @@ class Binder(QObject):
 
         self._register(refresh)
         return control
+
+
+class FlowLayout(QLayout):
+    """Cards flow into as many columns as the width allows.
+
+    The settings panels were a single tall column inside a scroll area, so the
+    Printer panel was 1147 px of content in a 406 px viewport - three screens of
+    scrolling to reach the pen-change height.  Widening the dock did nothing,
+    because a vertical box layout has no use for horizontal space.
+
+    This lays the same cards out left to right, wrapping when it runs out of
+    width, so a wide dock becomes two or three columns and the scrolling stops.
+    Narrow it again and it collapses back to one column on its own.
+    """
+
+    def __init__(self, parent=None, spacing: int = 10):
+        super().__init__(parent)
+        self._items: list = []
+        self._spacing = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:      # noqa: N802 - Qt
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):         # noqa: N802 - Qt
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):         # noqa: N802 - Qt
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):        # noqa: N802 - Qt
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt
+        return True
+
+    def heightForWidth(self, width: int) -> int:   # noqa: N802 - Qt
+        return self._layout(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect) -> None:  # noqa: N802 - Qt
+        super().setGeometry(rect)
+        self._layout(rect, apply=True)
+
+    def sizeHint(self) -> QSize:          # noqa: N802 - Qt
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:       # noqa: N802 - Qt
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+
+    def _gap(self) -> int:
+        set_by_caller = self.spacing()
+        return set_by_caller if set_by_caller >= 0 else self._spacing
+
+    def _layout(self, rect, apply: bool) -> int:
+        gap = self._gap()
+        margins = self.contentsMargins()
+        left = rect.x() + margins.left()
+        top = rect.y() + margins.top()
+        right = rect.right() - margins.right()
+
+        # How many columns fit?  Every card gets the same width so the panel
+        # reads as a grid rather than a ragged pile.
+        widest = max((item.sizeHint().width() for item in self._items), default=1)
+        available = max(right - left + 1, 1)
+        columns = max(int((available + gap) // (widest + gap)), 1)
+        column_width = max((available - (columns - 1) * gap) // columns, 1)
+
+        x, y, row_height = left, top, 0
+        column = 0
+        for item in self._items:
+            height = item.heightForWidth(column_width) if item.hasHeightForWidth() else item.sizeHint().height()
+            if apply:
+                item.setGeometry(QRect(x, y, column_width, height))
+            row_height = max(row_height, height)
+            column += 1
+            if column >= columns:
+                column = 0
+                x = left
+                y += row_height + gap
+                row_height = 0
+            else:
+                x += column_width + gap
+        if column:
+            y += row_height
+        else:
+            y -= gap
+        return y - rect.y() + margins.bottom()

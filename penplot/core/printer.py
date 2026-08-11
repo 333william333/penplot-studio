@@ -269,12 +269,34 @@ class _Worker(QObject):
 
     @Slot(bool)
     def cancel_job(self, lift: bool) -> None:
+        """Stop the stream dead and get the pen off the paper.
+
+        Clearing `resend_from` is the whole point.  A resend request in flight
+        when Stop was pressed used to survive the cancel, and `_tick` runs the
+        replay loop *before* it checks `running` - so the machine calmly redrew
+        every line still in the history buffer while the escape lift waited its
+        turn in the manual queue behind them.  Stop looked like it had done
+        nothing at all.
+
+        The lift is guarded the way `_abort_job` guards it: one per job.  A
+        second Stop on a job that has already stopped has no pen on paper to
+        rescue, and firing another relative `G1 Z10` for it is how the Z axis
+        walks up the gantry ten millimetres at a time.
+        """
         was_running = self.running
         self.running = False
         self.is_paused = False
+        self.resend_from = None
+        self.pending.clear()
         self.program_lines = []
+        self.program_drawn = []
+        self.pause_at = {}
+        self.z_at = {}
+        self.number_to_cursor.clear()
         self.cursor = 0
-        if lift and self.serial is not None:
+        self.total_lines = 0
+        if lift and was_running and not self._escaped and self.serial is not None:
+            self._escaped = True
             for command in ("G91", "G1 Z10 F900", "G90", "M117 Cancelled"):
                 self.send_manual(command)
         if was_running:
