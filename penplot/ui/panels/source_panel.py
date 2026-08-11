@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import os
 
 import numpy as np
@@ -24,7 +26,7 @@ from ...core import ai, autotune, looks, raster, separation, textsource
 from ...core.drawing import SourceResult
 from ...core.pdfsource import TEXT_MODES, PdfDocument
 from ...core import techniques
-from ...core.settings import AppSettings
+from ...core.settings import AppSettings, StyleSettings
 from .. import theme
 from ..gallery import TechniqueGallery
 from ..widgets import Binder, Card, FieldRow, Segmented, SliderSpin, hint_label
@@ -617,12 +619,14 @@ class SourcePanel(QWidget):
         that made every tone land in the middle and hatch the whole sheet.
         """
         style = self.settings.style
-        for key, value in (
-            ("brightness", 0.0), ("contrast", 0.0), ("gamma", 1.0), ("blur", 0.0),
-            ("invert", False), ("auto_levels", False),
-            ("black_point", 0.0), ("white_point", 1.0), ("saturation", 1.0),
-        ):
-            setattr(style, key, value)
+        # Every field that shapes the picture, taken from the dataclass rather
+        # than a hand-written list - the list had drifted and left enhance,
+        # detail and the modulation behind, so a "reset" quietly kept them.
+        fresh = StyleSettings()
+        for field in dataclasses.fields(fresh):
+            if field.name in ("technique", "params", "separation"):
+                continue        # what to draw and with how many pens is not a filter
+            setattr(style, field.name, getattr(fresh, field.name))
         rgb = self._image_rgb
         if rgb is not None:
             try:

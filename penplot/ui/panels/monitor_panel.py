@@ -510,6 +510,7 @@ class JobPanel(QWidget):
         self.printer = printer
         self._started_at: float | None = None
         self._total_lines = 0
+        self._last_line = 0
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -544,6 +545,7 @@ class JobPanel(QWidget):
         self.stop_button.clicked.connect(self._confirm_stop)
         buttons.addWidget(self.pause_button)
         buttons.addWidget(self.stop_button)
+        self._set_running(False)
         card.add_layout(buttons)
         outer.addWidget(card)
 
@@ -597,6 +599,8 @@ class JobPanel(QWidget):
     def job_started(self, total_lines: int, pen_names: list[str], estimate: float) -> None:
         self._started_at = time.monotonic()
         self._total_lines = total_lines
+        self._last_line = 0
+        self._set_running(True)
         self.progress.setValue(0)
         self.headline.setText("Drawing…")
         # The pen list has to survive the whole job: at a pen change the operator
@@ -609,6 +613,7 @@ class JobPanel(QWidget):
     def on_progress(self, line: int, total: int, drawn: float) -> None:
         if not total:
             return
+        self._last_line = line
         fraction = line / total
         self.progress.setValue(int(fraction * 1000))
         elapsed = time.monotonic() - (self._started_at or time.monotonic())
@@ -618,15 +623,49 @@ class JobPanel(QWidget):
         )
 
     def on_finished(self, ok: bool, message: str) -> None:
+        """Put the card back to a resting state.
+
+        A cancelled job used to leave everything exactly as it was: the bar
+        frozen at 43 %, "12 min left" counting down from a job that had already
+        stopped, and Pause and Stop still inviting you to press them.
+        """
         self.headline.setText(message)
         self.pause_button.setText("Pause")
+        self._set_running(False)
         if ok:
             self.progress.setValue(1000)
+            self.detail.setText(
+                f"{self._total_lines:,} commands in {format_duration(self._elapsed())}"
+            )
+        else:
+            self.progress.setValue(0)
+            if self._total_lines:
+                self.detail.setText(
+                    f"Stopped after {self._last_line:,} of {self._total_lines:,} commands "
+                    f"· {format_duration(self._elapsed())} in"
+                )
+            else:
+                self.detail.setText("")
+        self._started_at = None
+
+    def _elapsed(self) -> float:
+        return time.monotonic() - (self._started_at or time.monotonic())
+
+    def _set_running(self, running: bool) -> None:
+        self.pause_button.setEnabled(running)
+        self.stop_button.setEnabled(running)
+        tip = "" if running else "Nothing is running"
+        self.pause_button.setToolTip(tip)
+        self.stop_button.setToolTip(tip)
 
     def on_state(self, state: str) -> None:
         if state == "paused":
             self.headline.setText("Paused")
             self.pause_button.setText("Resume")
+            if self._total_lines:
+                self.detail.setText(
+                    f"Paused at {self._last_line:,} of {self._total_lines:,} commands"
+                )
         elif state == "printing":
             self.headline.setText("Drawing…")
             self.pause_button.setText("Pause")

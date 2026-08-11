@@ -1424,11 +1424,19 @@ class MainWindow(QMainWindow):
             self.printer.cancel(True)
 
     def _on_printer_finished(self, ok: bool, message: str) -> None:
+        """However the job ended, the window goes back to showing the drawing.
+
+        A cancelled job used to leave the canvas holding the half-drawn ghost it
+        had reached, with the scrubber stuck at that fraction - so the preview
+        no longer showed the artwork, and there was no obvious way to get it
+        back.
+        """
         self._printing = False
         self.statusBar().showMessage(message, 8000)
-        if ok:
-            self.preview.set_progress(1.0)
-            self.preview.set_live_position(None)
+        self.preview.set_live_position(None)
+        self.preview.set_progress(1.0)
+        self.progress_slider.setValue(1000)
+        self.connection_panel._update_enabled()
 
     # ------------------------------------------------------------------
     def reset_settings(self) -> None:
